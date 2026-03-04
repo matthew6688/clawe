@@ -104,6 +104,10 @@ const MARK_SYNC_NOTIFICATIONS_DELIVERED =
   (getServerEnvValue("CLAWE_MARK_SYNC_NOTIFICATIONS_DELIVERED") ?? "")
     .trim()
     .toLowerCase() === "true";
+const REQUIRE_DELEGATION_CONFIRMATION =
+  (getServerEnvValue("CLAWE_REQUIRE_DELEGATION_CONFIRMATION") ?? "true")
+    .trim()
+    .toLowerCase() !== "false";
 const APPEND_LEAD_SYNTHESIS =
   (getServerEnvValue("CLAWE_APPEND_LEAD_SYNTHESIS") ?? "true")
     .trim()
@@ -203,12 +207,14 @@ function isMentionableAgent(agent: AgentSummary): boolean {
 function shouldAutoCollaborate({
   sourceSessionKey,
   collaborationIntent,
+  delegationConfirmed,
   hasMentions,
   teammateCount,
   userText,
 }: {
   sourceSessionKey: string;
   collaborationIntent: boolean;
+  delegationConfirmed: boolean;
   hasMentions: boolean;
   teammateCount: number;
   userText: string;
@@ -220,6 +226,13 @@ function shouldAutoCollaborate({
 
   const normalizedText = userText.trim().toLowerCase();
   if (!normalizedText || LIGHTWEIGHT_MESSAGES.has(normalizedText)) {
+    return false;
+  }
+  if (
+    REQUIRE_DELEGATION_CONFIRMATION &&
+    sourceSessionKey === MAIN_SESSION_KEY &&
+    !delegationConfirmed
+  ) {
     return false;
   }
 
@@ -315,6 +328,17 @@ function isCollaborationIntent(text: string): boolean {
     /(?:\bcollaborat|\bdelegate|\bteam|\bmulti-agent|\bdivide\b|\bassign\b)/i.test(
       text,
     ) || /协作|分工|团队|一起|拆分任务|共同完成/.test(text)
+  );
+}
+
+function isDelegationConfirmation(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+
+  return (
+    /(?:\b(?:go ahead|proceed|start(?:\s+now|\s+working)?|dispatch|delegate|assign|route|kick off|execute(?:\s+now)?|that'?s all|nothing else|no further (?:details|info|information|context)|no more (?:details|info|information|context))\b)/i.test(
+      trimmed,
+    ) || /开始分工|开始执行|现在分配|可以分配|去执行|不用再问|没有更多(?:信息|内容|补充)?|没其他(?:了|补充)?|就这些|以上/.test(trimmed)
   );
 }
 
@@ -854,6 +878,7 @@ export async function POST(request: NextRequest) {
       lastUserContent;
 
     const collaborationIntent = isCollaborationIntent(lastUserContent);
+    const delegationConfirmed = isDelegationConfirmation(lastUserContent);
     const shouldInspectAgentRouting =
       mergedMentions.length > 0 ||
       collaborationIntent ||
@@ -879,6 +904,7 @@ export async function POST(request: NextRequest) {
     const autoCollaborationRequested = shouldAutoCollaborate({
       sourceSessionKey: sessionKey,
       collaborationIntent,
+      delegationConfirmed,
       hasMentions: routingMentions.length > 0,
       teammateCount: teammateAgents.length,
       userText: lastUserContent,
@@ -889,6 +915,8 @@ export async function POST(request: NextRequest) {
       hasExplicitMentions: mergedMentions.length > 0,
       routingMentions,
       collaborationIntent,
+      delegationConfirmed,
+      requireDelegationConfirmation: REQUIRE_DELEGATION_CONFIRMATION,
       autoCollaborationRequested,
       routableAgentCount: routableAgents.length,
       teammateAgentCount: teammateAgents.length,

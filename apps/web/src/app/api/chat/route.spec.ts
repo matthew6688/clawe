@@ -568,7 +568,7 @@ describe("POST /api/chat", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("auto-collaborates from main session on collaboration intent", async () => {
+  it("auto-collaborates from main session after explicit delegation confirmation", async () => {
     const queryMock = vi
       .fn()
       .mockResolvedValueOnce([
@@ -623,7 +623,7 @@ describe("POST /api/chat", () => {
       method: "POST",
       body: JSON.stringify({
         sessionKey: "agent:main:main",
-        messages: [{ role: "user", content: "请协作完成下周发布计划" }],
+        messages: [{ role: "user", content: "请协作完成下周发布计划，没其他补充了，开始分工" }],
       }),
     });
 
@@ -640,15 +640,14 @@ describe("POST /api/chat", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("auto-collaborates from main session without explicit intent keyword", async () => {
+  it("keeps no-mention message in Clawe session until delegation is confirmed", async () => {
     const queryMock = vi
       .fn()
       .mockResolvedValueOnce([
         { name: "Clawe", sessionKey: "agent:main:main" },
         { name: "Inky", sessionKey: "agent:inky:main" },
         { name: "Scout", sessionKey: "agent:scout:main" },
-      ])
-      .mockResolvedValueOnce({ name: "Clawe" });
+      ]);
     const mutationMock = vi.fn().mockResolvedValue(undefined);
 
     mockTenantAuth.getAuthenticatedTenant.mockResolvedValueOnce({
@@ -668,29 +667,6 @@ describe("POST /api/chat", () => {
       },
     });
 
-    sessionsSendMock
-      .mockResolvedValueOnce({
-        ok: true,
-        result: {
-          content: [{ type: "text", text: "I will draft the narrative." }],
-          details: { response: "I will draft the narrative." },
-        },
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        result: {
-          content: [{ type: "text", text: "I will prepare research data." }],
-          details: { response: "I will prepare research data." },
-        },
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        result: {
-          content: [{ type: "text", text: "Final coordinated output." }],
-          details: { response: "Final coordinated output." },
-        },
-      });
-
     const request = new NextRequest("http://localhost/api/chat", {
       method: "POST",
       body: JSON.stringify({
@@ -701,14 +677,17 @@ describe("POST /api/chat", () => {
 
     const response = await POST(request);
     expect(response.status).toBe(200);
-    const text = await response.text();
-    expect(text).toContain("Inky: I will draft the narrative.");
-    expect(text).toContain("Scout: I will prepare research data.");
-    expect(text).toContain("Clawe: Final coordinated output.");
-    expect(response.headers.get("X-Clawe-Auto-Collab")).toBe("true");
-    expect(response.headers.get("X-Clawe-Collab-Async")).toBe("false");
-    expect(mutationMock).toHaveBeenCalledTimes(1);
-    expect(sessionsSendMock).toHaveBeenCalledTimes(3);
+    await expect(response.text()).resolves.toBe("Acknowledged.");
+    expect(response.headers.get("X-Clawe-Auto-Collab")).toBeNull();
+    expect(response.headers.get("X-Clawe-Session-Key")).toBe("agent:main:main");
+    expect(mutationMock).not.toHaveBeenCalled();
+    expect(sessionsSendMock).toHaveBeenCalledTimes(1);
+    expect(sessionsSendMock).toHaveBeenCalledWith(
+      expect.any(Object),
+      "agent:main:main",
+      "prepare next week launch plan",
+      expect.any(Number),
+    );
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
