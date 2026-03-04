@@ -18,7 +18,7 @@ import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { useApiClient } from "@/hooks/use-api-client";
 
-const REFRESH_INTERVAL_MS = 5000;
+const REFRESH_INTERVAL_MS = 15000;
 
 type SystemLogRecord = {
   ts?: string;
@@ -67,7 +67,7 @@ export const SystemLogsSettings = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [autoRefresh, setAutoRefresh] = useState(false);
 
   const [requestIdFilter, setRequestIdFilter] = useState("");
   const [routeFilter, setRouteFilter] = useState("");
@@ -218,7 +218,7 @@ export const SystemLogsSettings = () => {
             variant={autoRefresh ? "brand" : "outline"}
             onClick={() => setAutoRefresh((prev) => !prev)}
           >
-            Auto refresh: {autoRefresh ? "on" : "off"}
+            Auto refresh: {autoRefresh ? "on (15s)" : "off"}
           </Button>
         </div>
 

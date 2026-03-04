@@ -64,6 +64,7 @@ export type ApiRequestLogger = ReturnType<typeof createApiRequestLogger>;
 export function createApiRequestLogger(request: NextRequest, route: string) {
   const requestId = request.headers.get("x-request-id")?.trim() || randomUUID();
   const startedAt = Date.now();
+  const shouldPersistToFile = !route.startsWith("tenant/logs/system.");
   const log = baseLogger.child({
     component: "api",
     route,
@@ -80,17 +81,19 @@ export function createApiRequestLogger(request: NextRequest, route: string) {
     },
     "request.start",
   );
-  writeRequestLogLine({
-    ts: new Date().toISOString(),
-    event: "request.start",
-    route,
-    requestId,
-    method: request.method,
-    path: request.nextUrl.pathname,
-    query: sanitizeQuery(request),
-    userAgent: request.headers.get("user-agent") ?? null,
-    clientIp: getClientIp(request),
-  });
+  if (shouldPersistToFile) {
+    writeRequestLogLine({
+      ts: new Date().toISOString(),
+      event: "request.start",
+      route,
+      requestId,
+      method: request.method,
+      path: request.nextUrl.pathname,
+      query: sanitizeQuery(request),
+      userAgent: request.headers.get("user-agent") ?? null,
+      clientIp: getClientIp(request),
+    });
+  }
 
   const finish = (
     response: Response,
@@ -106,17 +109,19 @@ export function createApiRequestLogger(request: NextRequest, route: string) {
       },
       message,
     );
-    writeRequestLogLine({
-      ts: new Date().toISOString(),
-      event: message,
-      route,
-      requestId,
-      method: request.method,
-      path: request.nextUrl.pathname,
-      status: response.status,
-      durationMs: Date.now() - startedAt,
-      ...details,
-    });
+    if (shouldPersistToFile) {
+      writeRequestLogLine({
+        ts: new Date().toISOString(),
+        event: message,
+        route,
+        requestId,
+        method: request.method,
+        path: request.nextUrl.pathname,
+        status: response.status,
+        durationMs: Date.now() - startedAt,
+        ...details,
+      });
+    }
     return response;
   };
 
@@ -142,18 +147,20 @@ export function createApiRequestLogger(request: NextRequest, route: string) {
       },
       "request.failed",
     );
-    writeRequestLogLine({
-      ts: new Date().toISOString(),
-      event: "request.failed",
-      route,
-      requestId,
-      method: request.method,
-      path: request.nextUrl.pathname,
-      status,
-      durationMs: Date.now() - startedAt,
-      error: message,
-      ...details,
-    });
+    if (shouldPersistToFile) {
+      writeRequestLogLine({
+        ts: new Date().toISOString(),
+        event: "request.failed",
+        route,
+        requestId,
+        method: request.method,
+        path: request.nextUrl.pathname,
+        status,
+        durationMs: Date.now() - startedAt,
+        error: message,
+        ...details,
+      });
+    }
     return finish(
       NextResponse.json({ ok: false, error: message, requestId }, { status }),
       "request.failed.response",
