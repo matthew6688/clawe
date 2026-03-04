@@ -1,8 +1,8 @@
-import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { api } from "@clawe/backend";
 import { getConfig, patchConfig } from "@clawe/shared/squadhub";
 import { getAuthenticatedTenant } from "@/lib/api/tenant-auth";
+import { createApiRequestLogger } from "@/lib/api/request-logger";
 
 const PATCH_TIMEOUT_MS = 4000;
 const DEFAULT_KIMI_MODEL = "kimi-coding/k2p5";
@@ -79,8 +79,18 @@ function patchDefaultAgentModels(
  * Save tenant API keys and best-effort patch Squadhub config.
  */
 export async function POST(request: NextRequest) {
-  const auth = await getAuthenticatedTenant(request);
-  if (auth.error) return auth.error;
+  const reqLog = createApiRequestLogger(request, "tenant/api-keys");
+  let auth: Awaited<ReturnType<typeof getAuthenticatedTenant>>;
+  try {
+    auth = await getAuthenticatedTenant(request);
+  } catch (error) {
+    return reqLog.fail(401, error, {
+      operation: "api_keys.auth",
+    });
+  }
+  if (auth.error) {
+    return reqLog.finish(auth.error, "request.auth_failed");
+  }
 
   try {
     const body = (await request.json()) as {
@@ -120,6 +130,16 @@ export async function POST(request: NextRequest) {
       kimiApiKey: effectiveKimiApiKey,
     });
 
+    reqLog.log.info(
+      {
+        hasAnthropicInput: !!anthropicApiKey,
+        hasOpenAIInput: !!openaiApiKey,
+        hasKimiInput: !!kimiApiKey,
+        preferredModel: preferredModel ?? null,
+      },
+      "api_keys.input_normalized",
+    );
+
     await auth.convex.mutation(api.tenants.setApiKeys, {
       anthropicApiKey,
       openaiApiKey,
@@ -131,6 +151,14 @@ export async function POST(request: NextRequest) {
 
     if (auth.tenant.squadhubUrl && auth.tenant.squadhubToken) {
       try {
+        reqLog.log.info(
+          {
+            patchTimeoutMs: PATCH_TIMEOUT_MS,
+            hasTenantSquadhubConnection: true,
+          },
+          "api_keys.patch_started",
+        );
+
         const env: Record<string, string> = {};
         if (anthropicApiKey) {
           env.ANTHROPIC_API_KEY = anthropicApiKey;
@@ -199,14 +227,43 @@ export async function POST(request: NextRequest) {
         }
 
         patched = true;
+        reqLog.log.info(
+          {
+            patched,
+            preferredModel: preferredModel ?? null,
+          },
+          "api_keys.patch_completed",
+        );
       } catch (error) {
         patchError = error instanceof Error ? error.message : "Patch failed";
+        reqLog.log.warn(
+          {
+            patchError,
+          },
+          "api_keys.patch_failed",
+        );
       }
+    } else {
+      reqLog.log.info(
+        {
+          hasTenantSquadhubConnection: false,
+        },
+        "api_keys.patch_skipped",
+      );
     }
 
-    return NextResponse.json({ ok: true, patched, patchError });
+    return reqLog.json(
+      200,
+      { ok: true, patched, patchError },
+      "api_keys.saved",
+      {
+        patched,
+        hasPatchError: !!patchError,
+      },
+    );
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    return reqLog.fail(500, error, {
+      operation: "api_keys.save",
+    });
   }
 }

@@ -4,6 +4,7 @@ import { api } from "@clawe/backend";
 import type { Id } from "@clawe/backend/dataModel";
 import { sessionsSend } from "@clawe/shared/squadhub";
 import { getAuthenticatedTenant } from "@/lib/api/tenant-auth";
+import { createApiRequestLogger } from "@/lib/api/request-logger";
 import { getConnection } from "@/lib/squadhub/connection";
 import { getServerEnvValue } from "@/lib/runtime-config";
 
@@ -546,6 +547,7 @@ async function dispatchMentionedMessage({
   targets,
   tenant,
   timeoutSeconds,
+  requestId,
 }: {
   sourceSessionKey: string;
   sourceName: string;
@@ -553,6 +555,7 @@ async function dispatchMentionedMessage({
   targets: MentionTarget[];
   tenant: Parameters<typeof getConnection>[0];
   timeoutSeconds?: number;
+  requestId?: string;
 }): Promise<{
   reply: string;
   successes: number;
@@ -607,6 +610,7 @@ async function dispatchMentionedMessage({
   }
 
   debugChat("mention_dispatch_results", {
+    ...(requestId ? { requestId } : {}),
     sourceSessionKey,
     sourceName,
     targetCount: targets.length,
@@ -850,9 +854,26 @@ async function callKimiCoding(
  * Fallback path: direct provider response (Anthropic/OpenAI/Kimi) when session routing fails.
  */
 export async function POST(request: NextRequest) {
+  const reqLog = createApiRequestLogger(request, "chat");
+  const respond = (
+    response: Response,
+    message: string,
+    details: Record<string, unknown> = {},
+  ) => reqLog.finish(response, message, details);
+  const respondError = (
+    status: number,
+    error: string,
+    message: string,
+    details: Record<string, unknown> = {},
+  ) => respond(toJsonResponse(status, error), message, details);
+  const logChatDebug = (event: string, details: Record<string, unknown>) =>
+    debugChat(event, { requestId: reqLog.requestId, ...details });
+
   try {
     const auth = await getAuthenticatedTenant(request);
-    if (auth.error) return auth.error;
+    if (auth.error) {
+      return respond(auth.error, "chat.auth_failed");
+    }
 
     const body = await request.json();
     const { messages, sessionKey, mentions, routedMessage } = body as {
@@ -863,16 +884,29 @@ export async function POST(request: NextRequest) {
     };
 
     if (!sessionKey || typeof sessionKey !== "string") {
-      return toJsonResponse(400, "sessionKey is required");
+      return respondError(400, "sessionKey is required", "chat.invalid_request", {
+        reason: "missing_session_key",
+      });
     }
 
     if (!messages || !Array.isArray(messages)) {
-      return toJsonResponse(400, "messages is required");
+      return respondError(400, "messages is required", "chat.invalid_request", {
+        reason: "missing_messages",
+        sessionKey,
+      });
     }
 
     const normalizedMessages = normalizeMessages(messages);
     if (normalizedMessages.length === 0) {
-      return toJsonResponse(400, "No valid messages provided");
+      return respondError(
+        400,
+        "No valid messages provided",
+        "chat.invalid_request",
+        {
+          reason: "no_valid_messages",
+          sessionKey,
+        },
+      );
     }
 
     const lastUserMessage = [...normalizedMessages]
@@ -893,6 +927,16 @@ export async function POST(request: NextRequest) {
       (typeof routedMessage === "string" ? routedMessage : "").trim() ||
       stripMentions(lastUserContent) ||
       lastUserContent;
+
+    reqLog.log.info(
+      {
+        sessionKey,
+        messageCount: normalizedMessages.length,
+        mentionCount: mergedMentions.length,
+        hasRoutedMessage: typeof routedMessage === "string",
+      },
+      "chat.request_parsed",
+    );
 
     const collaborationIntent = isCollaborationIntent(lastUserContent);
     const delegationConfirmed = isDelegationConfirmation(lastUserContent);
@@ -927,7 +971,21 @@ export async function POST(request: NextRequest) {
       userText: lastUserContent,
     });
 
-    debugChat("routing_evaluated", {
+    if (shouldInspectAgentRouting) {
+      reqLog.log.info(
+        {
+          sessionKey,
+          listedAgentCount: listedAgents.length,
+          routableAgentCount: routableAgents.length,
+          mentionableAgentCount: mentionableAgents.length,
+          teammateCount: teammateAgents.length,
+          autoCollaborationRequested,
+        },
+        "chat.agent_routing_loaded",
+      );
+    }
+
+    logChatDebug("routing_evaluated", {
       sourceSessionKey: sessionKey,
       hasExplicitMentions: mergedMentions.length > 0,
       routingMentions,
@@ -974,7 +1032,7 @@ export async function POST(request: NextRequest) {
         const sourceName = await getSourceName();
         const targetSessionKeys = targets.map((target) => target.sessionKey);
 
-        debugChat("mention_dispatch_started", {
+        logChatDebug("mention_dispatch_started", {
           sourceSessionKey: sessionKey,
           sourceName,
           targetSessionKeys,
@@ -992,7 +1050,7 @@ export async function POST(request: NextRequest) {
 
         const isCollaborativeRoute = collaborationIntent || targets.length > 1;
         if (MENTION_DISPATCH_MODE === "async") {
-          debugChat("mention_dispatch_completed", {
+          logChatDebug("mention_dispatch_completed", {
             sourceSessionKey: sessionKey,
             sourceName,
             targetSessionKeys,
@@ -1000,19 +1058,27 @@ export async function POST(request: NextRequest) {
             isCollaborativeRoute,
             mode: "async",
           });
-          return new Response(buildQueuedDispatchReply(targets), {
-            status: 200,
-            headers: {
-              "Content-Type": "text/plain; charset=utf-8",
-              "X-Clawe-Mention-Routed": "true",
-              "X-Clawe-Mention-Targets": targets
-                .map((t) => t.sessionKey)
-                .join(","),
-              "X-Clawe-Mention-Successes": "0",
-              "X-Clawe-Auto-Collab": isCollaborativeRoute ? "true" : "false",
-              "X-Clawe-Collab-Async": "true",
+          return respond(
+            new Response(buildQueuedDispatchReply(targets), {
+              status: 200,
+              headers: {
+                "Content-Type": "text/plain; charset=utf-8",
+                "X-Clawe-Mention-Routed": "true",
+                "X-Clawe-Mention-Targets": targets
+                  .map((t) => t.sessionKey)
+                  .join(","),
+                "X-Clawe-Mention-Successes": "0",
+                "X-Clawe-Auto-Collab": isCollaborativeRoute ? "true" : "false",
+                "X-Clawe-Collab-Async": "true",
+              },
+            }),
+            "chat.mention_dispatch_async",
+            {
+              sessionKey,
+              targetCount: targets.length,
+              isCollaborativeRoute,
             },
-          });
+          );
         }
 
         if (MARK_SYNC_NOTIFICATIONS_DELIVERED) {
@@ -1031,6 +1097,7 @@ export async function POST(request: NextRequest) {
           timeoutSeconds: isCollaborativeRoute
             ? COLLAB_TARGET_DISPATCH_TIMEOUT_SECONDS
             : TARGET_DISPATCH_TIMEOUT_SECONDS,
+          requestId: reqLog.requestId,
         });
         const withSynthesis = await appendLeadSynthesis({
           tenant: auth.tenant,
@@ -1041,7 +1108,7 @@ export async function POST(request: NextRequest) {
           specialistReplies: dispatch.specialistReplies,
         });
 
-        debugChat("mention_dispatch_completed", {
+        logChatDebug("mention_dispatch_completed", {
           sourceSessionKey: sessionKey,
           sourceName,
           targetSessionKeys,
@@ -1051,19 +1118,28 @@ export async function POST(request: NextRequest) {
           leadSynthesisAppended: withSynthesis.appended,
         });
 
-        return new Response(withSynthesis.reply, {
-          status: 200,
-          headers: {
-            "Content-Type": "text/plain; charset=utf-8",
-            "X-Clawe-Mention-Routed": "true",
-            "X-Clawe-Mention-Targets": targets
-              .map((t) => t.sessionKey)
-              .join(","),
-            "X-Clawe-Mention-Successes": String(dispatch.successes),
-            "X-Clawe-Auto-Collab": isCollaborativeRoute ? "true" : "false",
-            "X-Clawe-Collab-Async": "false",
+        return respond(
+          new Response(withSynthesis.reply, {
+            status: 200,
+            headers: {
+              "Content-Type": "text/plain; charset=utf-8",
+              "X-Clawe-Mention-Routed": "true",
+              "X-Clawe-Mention-Targets": targets
+                .map((t) => t.sessionKey)
+                .join(","),
+              "X-Clawe-Mention-Successes": String(dispatch.successes),
+              "X-Clawe-Auto-Collab": isCollaborativeRoute ? "true" : "false",
+              "X-Clawe-Collab-Async": "false",
+            },
+          }),
+          "chat.mention_dispatch_sync",
+          {
+            sessionKey,
+            targetCount: targets.length,
+            successCount: dispatch.successes,
+            leadSynthesisAppended: withSynthesis.appended,
           },
-        });
+        );
       }
     }
 
@@ -1078,7 +1154,7 @@ export async function POST(request: NextRequest) {
           (target) => target.sessionKey,
         );
 
-        debugChat("auto_collab_dispatch_started", {
+        logChatDebug("auto_collab_dispatch_started", {
           sourceSessionKey: sessionKey,
           sourceName,
           targetSessionKeys,
@@ -1094,7 +1170,7 @@ export async function POST(request: NextRequest) {
         });
 
         if (MENTION_DISPATCH_MODE === "async") {
-          debugChat("auto_collab_dispatch_completed", {
+          logChatDebug("auto_collab_dispatch_completed", {
             sourceSessionKey: sessionKey,
             sourceName,
             targetSessionKeys,
@@ -1102,18 +1178,25 @@ export async function POST(request: NextRequest) {
             mode: "async",
           });
 
-          return new Response(buildQueuedDispatchReply(collabTargets), {
-            status: 200,
-            headers: {
-              "Content-Type": "text/plain; charset=utf-8",
-              "X-Clawe-Auto-Collab": "true",
-              "X-Clawe-Mention-Targets": collabTargets
-                .map((t) => t.sessionKey)
-                .join(","),
-              "X-Clawe-Mention-Successes": "0",
-              "X-Clawe-Collab-Async": "true",
+          return respond(
+            new Response(buildQueuedDispatchReply(collabTargets), {
+              status: 200,
+              headers: {
+                "Content-Type": "text/plain; charset=utf-8",
+                "X-Clawe-Auto-Collab": "true",
+                "X-Clawe-Mention-Targets": collabTargets
+                  .map((t) => t.sessionKey)
+                  .join(","),
+                "X-Clawe-Mention-Successes": "0",
+                "X-Clawe-Collab-Async": "true",
+              },
+            }),
+            "chat.auto_collab_async",
+            {
+              sessionKey,
+              targetCount: collabTargets.length,
             },
-          });
+          );
         }
 
         if (MARK_SYNC_NOTIFICATIONS_DELIVERED) {
@@ -1130,6 +1213,7 @@ export async function POST(request: NextRequest) {
           targets: collabTargets,
           tenant: auth.tenant,
           timeoutSeconds: COLLAB_TARGET_DISPATCH_TIMEOUT_SECONDS,
+          requestId: reqLog.requestId,
         });
         const withSynthesis = await appendLeadSynthesis({
           tenant: auth.tenant,
@@ -1140,7 +1224,7 @@ export async function POST(request: NextRequest) {
           specialistReplies: dispatch.specialistReplies,
         });
 
-        debugChat("auto_collab_dispatch_completed", {
+        logChatDebug("auto_collab_dispatch_completed", {
           sourceSessionKey: sessionKey,
           sourceName,
           targetSessionKeys,
@@ -1149,18 +1233,27 @@ export async function POST(request: NextRequest) {
           leadSynthesisAppended: withSynthesis.appended,
         });
 
-        return new Response(withSynthesis.reply, {
-          status: 200,
-          headers: {
-            "Content-Type": "text/plain; charset=utf-8",
-            "X-Clawe-Auto-Collab": "true",
-            "X-Clawe-Mention-Targets": collabTargets
-              .map((t) => t.sessionKey)
-              .join(","),
-            "X-Clawe-Mention-Successes": String(dispatch.successes),
-            "X-Clawe-Collab-Async": "false",
+        return respond(
+          new Response(withSynthesis.reply, {
+            status: 200,
+            headers: {
+              "Content-Type": "text/plain; charset=utf-8",
+              "X-Clawe-Auto-Collab": "true",
+              "X-Clawe-Mention-Targets": collabTargets
+                .map((t) => t.sessionKey)
+                .join(","),
+              "X-Clawe-Mention-Successes": String(dispatch.successes),
+              "X-Clawe-Collab-Async": "false",
+            },
+          }),
+          "chat.auto_collab_sync",
+          {
+            sessionKey,
+            targetCount: collabTargets.length,
+            successCount: dispatch.successes,
+            leadSynthesisAppended: withSynthesis.appended,
           },
-        });
+        );
       }
     }
 
@@ -1180,13 +1273,22 @@ export async function POST(request: NextRequest) {
         ? buildClarificationOnlyPrompt(defaultMessage)
         : defaultMessage;
 
-      debugChat("default_session_dispatch_started", {
+      logChatDebug("default_session_dispatch_started", {
         sourceSessionKey: sessionKey,
         messageLength: defaultMessage.length,
         clarificationOnlyMode,
       });
 
       try {
+        reqLog.log.info(
+          {
+            sessionKey,
+            timeoutSeconds: DEFAULT_SESSION_SEND_TIMEOUT_SECONDS,
+            clarificationOnlyMode,
+          },
+          "chat.session_dispatch_attempt",
+        );
+
         const sessionDispatch = await sessionsSend(
           getConnection(auth.tenant),
           sessionKey,
@@ -1195,7 +1297,7 @@ export async function POST(request: NextRequest) {
         );
 
         if (!sessionDispatch.ok) {
-          debugChat("default_session_dispatch_error", {
+          logChatDebug("default_session_dispatch_error", {
             sourceSessionKey: sessionKey,
             error: sessionDispatch.error?.message ?? "unknown",
           });
@@ -1203,40 +1305,53 @@ export async function POST(request: NextRequest) {
 
         const sessionReply = extractSessionsSendReply(sessionDispatch);
         if (sessionReply) {
-          debugChat("default_session_dispatch_completed", {
+          logChatDebug("default_session_dispatch_completed", {
             sourceSessionKey: sessionKey,
             replyLength: sessionReply.length,
           });
-          return new Response(sessionReply, {
-            status: 200,
-            headers: {
-              "Content-Type": "text/plain; charset=utf-8",
-              "X-Clawe-Session-Routed": "true",
-              "X-Clawe-Session-Key": sessionKey,
-              "X-Clawe-Clarification-Only": clarificationOnlyMode
-                ? "true"
-                : "false",
+          return respond(
+            new Response(sessionReply, {
+              status: 200,
+              headers: {
+                "Content-Type": "text/plain; charset=utf-8",
+                "X-Clawe-Session-Routed": "true",
+                "X-Clawe-Session-Key": sessionKey,
+                "X-Clawe-Clarification-Only": clarificationOnlyMode
+                  ? "true"
+                  : "false",
+              },
+            }),
+            "chat.session_dispatch_success",
+            {
+              sessionKey,
+              clarificationOnlyMode,
             },
-          });
+          );
         }
       } catch (error) {
-        debugChat("default_session_dispatch_exception", {
+        logChatDebug("default_session_dispatch_exception", {
           sourceSessionKey: sessionKey,
           error: error instanceof Error ? error.message : String(error),
         });
       }
 
       if (isAgentSessionKey(sessionKey)) {
-        return new Response(
-          "Agent queue is busy right now. Your message was accepted; progress will appear in Activity shortly.",
-          {
-            status: 200,
-            headers: {
-              "Content-Type": "text/plain; charset=utf-8",
-              "X-Clawe-Session-Routed": "true",
-              "X-Clawe-Session-Key": sessionKey,
-              "X-Clawe-Session-Queued": "true",
+        return respond(
+          new Response(
+            "Agent queue is busy right now. Your message was accepted; progress will appear in Activity shortly.",
+            {
+              status: 200,
+              headers: {
+                "Content-Type": "text/plain; charset=utf-8",
+                "X-Clawe-Session-Routed": "true",
+                "X-Clawe-Session-Key": sessionKey,
+                "X-Clawe-Session-Queued": "true",
+              },
             },
+          ),
+          "chat.session_queued",
+          {
+            sessionKey,
           },
         );
       }
@@ -1257,9 +1372,13 @@ export async function POST(request: NextRequest) {
         : undefined;
 
     if (!anthropicApiKey && !openaiApiKey && !kimiApiKey) {
-      return toJsonResponse(
+      return respondError(
         400,
         "No provider API key configured. Add Anthropic, OpenAI, or Kimi key in Settings > API Keys.",
+        "chat.provider_unconfigured",
+        {
+          sessionKey,
+        },
       );
     }
 
@@ -1269,6 +1388,13 @@ export async function POST(request: NextRequest) {
     let kimiError: string | null = null;
 
     if (anthropicApiKey) {
+      reqLog.log.info(
+        {
+          sessionKey,
+          provider: "anthropic",
+        },
+        "chat.provider_attempt",
+      );
       try {
         text = await callAnthropic(normalizedMessages, anthropicApiKey);
       } catch (error) {
@@ -1278,6 +1404,13 @@ export async function POST(request: NextRequest) {
     }
 
     if (!text && openaiApiKey) {
+      reqLog.log.info(
+        {
+          sessionKey,
+          provider: "openai",
+        },
+        "chat.provider_attempt",
+      );
       try {
         text = await callOpenAI(normalizedMessages, openaiApiKey);
       } catch (error) {
@@ -1287,6 +1420,13 @@ export async function POST(request: NextRequest) {
     }
 
     if (!text && kimiApiKey) {
+      reqLog.log.info(
+        {
+          sessionKey,
+          provider: "kimi",
+        },
+        "chat.provider_attempt",
+      );
       try {
         text = await callKimiCoding(normalizedMessages, kimiApiKey);
       } catch (error) {
@@ -1299,7 +1439,7 @@ export async function POST(request: NextRequest) {
       const details = [anthropicError, openaiError, kimiError]
         .filter(Boolean)
         .join(" | ");
-      debugChat("provider_fallback_failed", {
+      logChatDebug("provider_fallback_failed", {
         sourceSessionKey: sessionKey,
         anthropicError,
         openaiError,
@@ -1311,26 +1451,45 @@ export async function POST(request: NextRequest) {
           isQuotaError(openaiError) ||
           isQuotaError(kimiError))
       ) {
-        return new Response(buildDemoFallbackReply(normalizedMessages), {
-          status: 200,
-          headers: {
-            "Content-Type": "text/plain; charset=utf-8",
-            "X-Clawe-Demo-Fallback": "quota",
+        return respond(
+          new Response(buildDemoFallbackReply(normalizedMessages), {
+            status: 200,
+            headers: {
+              "Content-Type": "text/plain; charset=utf-8",
+              "X-Clawe-Demo-Fallback": "quota",
+            },
+          }),
+          "chat.provider_demo_fallback",
+          {
+            sessionKey,
           },
-        });
+        );
       }
 
-      return toJsonResponse(502, details || "No provider produced a response");
+      return respondError(
+        502,
+        details || "No provider produced a response",
+        "chat.provider_failed",
+        {
+          sessionKey,
+        },
+      );
     }
 
-    return new Response(text, {
-      status: 200,
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
-    });
+    return respond(
+      new Response(text, {
+        status: 200,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      }),
+      "chat.provider_success",
+      {
+        sessionKey,
+      },
+    );
   } catch (error) {
     console.error("[chat] Error:", error);
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error";
-    return toJsonResponse(500, errorMessage);
+    return reqLog.fail(500, error, {
+      operation: "chat.post",
+    });
   }
 }

@@ -1,10 +1,10 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
-import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { api } from "@clawe/backend";
 import type { Doc } from "@clawe/backend/dataModel";
 import { getAuthenticatedTenant } from "@/lib/api/tenant-auth";
+import { createApiRequestLogger } from "@/lib/api/request-logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -53,10 +53,6 @@ type SkillsSnapshot = {
   resolvedSkills?: unknown[];
   version?: number;
 };
-
-function toJson(status: number, payload: Record<string, unknown>) {
-  return NextResponse.json(payload, { status });
-}
 
 async function pathExists(targetPath: string): Promise<boolean> {
   try {
@@ -282,15 +278,29 @@ async function buildOpenclawAgentPayload({
 }
 
 export async function GET(request: NextRequest) {
-  const auth = await getAuthenticatedTenant(request);
-  if (auth.error) return auth.error;
+  const reqLog = createApiRequestLogger(request, "tenant/agents/openclaw.GET");
+  let auth: Awaited<ReturnType<typeof getAuthenticatedTenant>>;
+  try {
+    auth = await getAuthenticatedTenant(request);
+  } catch (error) {
+    return reqLog.fail(401, error, {
+      operation: "openclaw.get.auth",
+    });
+  }
+  if (auth.error) {
+    return reqLog.finish(auth.error, "request.auth_failed");
+  }
 
   const resolved = await resolveSquadhubRoot();
   if (!resolved) {
-    return toJson(500, {
-      ok: false,
-      error: "Unable to locate squadhub state root",
-    });
+    return reqLog.json(
+      500,
+      {
+        ok: false,
+        error: "Unable to locate squadhub state root",
+      },
+      "openclaw.root_missing",
+    );
   }
 
   try {
@@ -346,31 +356,57 @@ export async function GET(request: NextRequest) {
         }),
       );
 
-    return toJson(200, {
-      ok: true,
-      rootPath: resolved.rootPath,
-      configPath: resolved.configPath,
-      config: sanitizeOpenclawConfig(openclawConfig),
-      agents,
-    });
+    return reqLog.json(
+      200,
+      {
+        ok: true,
+        rootPath: resolved.rootPath,
+        configPath: resolved.configPath,
+        config: sanitizeOpenclawConfig(openclawConfig),
+        agents,
+      },
+      "openclaw.loaded",
+      {
+        requestedSessionKey: sessionKeyFilter ?? null,
+        openclawAgentCount: openclawAgents.length,
+        convexAgentCount: convexAgents.length,
+        responseAgentCount: agents.length,
+      },
+    );
   } catch (error) {
-    return toJson(500, {
-      ok: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+    return reqLog.fail(500, error, {
+      operation: "openclaw.get",
     });
   }
 }
 
 export async function PATCH(request: NextRequest) {
-  const auth = await getAuthenticatedTenant(request);
-  if (auth.error) return auth.error;
+  const reqLog = createApiRequestLogger(
+    request,
+    "tenant/agents/openclaw.PATCH",
+  );
+  let auth: Awaited<ReturnType<typeof getAuthenticatedTenant>>;
+  try {
+    auth = await getAuthenticatedTenant(request);
+  } catch (error) {
+    return reqLog.fail(401, error, {
+      operation: "openclaw.patch.auth",
+    });
+  }
+  if (auth.error) {
+    return reqLog.finish(auth.error, "request.auth_failed");
+  }
 
   const resolved = await resolveSquadhubRoot();
   if (!resolved) {
-    return toJson(500, {
-      ok: false,
-      error: "Unable to locate squadhub state root",
-    });
+    return reqLog.json(
+      500,
+      {
+        ok: false,
+        error: "Unable to locate squadhub state root",
+      },
+      "openclaw.root_missing",
+    );
   }
 
   try {
@@ -391,7 +427,11 @@ export async function PATCH(request: NextRequest) {
     const targetAgentId = inputAgentId || agentIdFromSession;
 
     if (!targetAgentId) {
-      return toJson(400, { ok: false, error: "agentId or sessionKey is required" });
+      return reqLog.json(
+        400,
+        { ok: false, error: "agentId or sessionKey is required" },
+        "openclaw.patch_missing_agent",
+      );
     }
 
     const openclawPatch =
@@ -404,11 +444,24 @@ export async function PATCH(request: NextRequest) {
         : undefined;
 
     if (!openclawPatch && !filesPatch) {
-      return toJson(400, {
-        ok: false,
-        error: "Provide openclawPatch and/or files",
-      });
+      return reqLog.json(
+        400,
+        {
+          ok: false,
+          error: "Provide openclawPatch and/or files",
+        },
+        "openclaw.patch_missing_payload",
+      );
     }
+
+    reqLog.log.info(
+      {
+        targetAgentId,
+        hasOpenclawPatch: !!openclawPatch,
+        filePatchCount: filesPatch ? Object.keys(filesPatch).length : 0,
+      },
+      "openclaw.patch_received",
+    );
 
     const openclawConfig = await readJsonFile<OpenclawConfig>(resolved.configPath);
     const list = Array.isArray(openclawConfig.agents?.list)
@@ -462,10 +515,18 @@ export async function PATCH(request: NextRequest) {
         if (typeof value !== "string") continue;
         const normalized = normalizeEditableRelativePath(relativePath);
         if (!normalized) {
-          return toJson(400, {
-            ok: false,
-            error: `File path is not editable: ${relativePath}`,
-          });
+          return reqLog.json(
+            400,
+            {
+              ok: false,
+              error: `File path is not editable: ${relativePath}`,
+            },
+            "openclaw.patch_invalid_path",
+            {
+              targetAgentId,
+              relativePath,
+            },
+          );
         }
 
         const fullPath = path.resolve(workspaceResolvedPath, normalized);
@@ -489,14 +550,21 @@ export async function PATCH(request: NextRequest) {
       convexAgent: convexMatch,
     });
 
-    return toJson(200, {
-      ok: true,
-      agent: payload,
-    });
+    return reqLog.json(
+      200,
+      {
+        ok: true,
+        agent: payload,
+      },
+      "openclaw.patch_saved",
+      {
+        targetAgentId,
+        hasAgentPayload: !!payload,
+      },
+    );
   } catch (error) {
-    return toJson(500, {
-      ok: false,
-      error: error instanceof Error ? error.message : "Unknown error",
+    return reqLog.fail(500, error, {
+      operation: "openclaw.patch",
     });
   }
 }
