@@ -368,10 +368,11 @@ describe("POST /api/chat", () => {
     expect(text).toContain("Inky: I'll draft copy.");
     expect(text).toContain("Pixel: I'll prepare visuals.");
     expect(text).toContain("Scout: I'll provide SEO keywords.");
+    expect(text).toContain("Clawe: Team plan with owners.");
     expect(response.headers.get("X-Clawe-Auto-Collab")).toBe("true");
     expect(response.headers.get("X-Clawe-Collab-Async")).toBe("false");
     expect(mutationMock).toHaveBeenCalledTimes(1);
-    expect(sessionsSendMock).toHaveBeenCalledTimes(3);
+    expect(sessionsSendMock).toHaveBeenCalledTimes(4);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -560,9 +561,10 @@ describe("POST /api/chat", () => {
     const text = await response.text();
     expect(text).toContain("Inky: I will draft copy blocks.");
     expect(text).toContain("Pixel: I will create visual drafts.");
+    expect(text).toContain("Clawe: Combined execution plan.");
     expect(response.headers.get("X-Clawe-Collab-Async")).toBe("false");
     expect(mutationMock).toHaveBeenCalledTimes(1);
-    expect(sessionsSendMock).toHaveBeenCalledTimes(2);
+    expect(sessionsSendMock).toHaveBeenCalledTimes(3);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -630,10 +632,11 @@ describe("POST /api/chat", () => {
     const text = await response.text();
     expect(text).toContain("Inky: I will write the launch copy.");
     expect(text).toContain("Pixel: I will design key visuals.");
+    expect(text).toContain("Clawe: Final plan with owners.");
     expect(response.headers.get("X-Clawe-Auto-Collab")).toBe("true");
     expect(response.headers.get("X-Clawe-Collab-Async")).toBe("false");
     expect(mutationMock).toHaveBeenCalledTimes(1);
-    expect(sessionsSendMock).toHaveBeenCalledTimes(2);
+    expect(sessionsSendMock).toHaveBeenCalledTimes(3);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -701,10 +704,11 @@ describe("POST /api/chat", () => {
     const text = await response.text();
     expect(text).toContain("Inky: I will draft the narrative.");
     expect(text).toContain("Scout: I will prepare research data.");
+    expect(text).toContain("Clawe: Final coordinated output.");
     expect(response.headers.get("X-Clawe-Auto-Collab")).toBe("true");
     expect(response.headers.get("X-Clawe-Collab-Async")).toBe("false");
     expect(mutationMock).toHaveBeenCalledTimes(1);
-    expect(sessionsSendMock).toHaveBeenCalledTimes(2);
+    expect(sessionsSendMock).toHaveBeenCalledTimes(3);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -772,10 +776,11 @@ describe("POST /api/chat", () => {
     const text = await response.text();
     expect(text).toContain("Scout: I will cover keyword strategy.");
     expect(text).toContain("Inky: I will draft positioning copy.");
+    expect(text).toContain("Clawe: Team breakdown complete.");
     expect(response.headers.get("X-Clawe-Auto-Collab")).toBe("true");
     expect(response.headers.get("X-Clawe-Collab-Async")).toBe("false");
     expect(mutationMock).toHaveBeenCalledTimes(1);
-    expect(sessionsSendMock).toHaveBeenCalledTimes(2);
+    expect(sessionsSendMock).toHaveBeenCalledTimes(3);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

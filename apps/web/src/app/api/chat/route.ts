@@ -36,6 +36,10 @@ type AgentSummary = {
 type MentionTarget = AgentSummary & {
   token: string;
 };
+type SpecialistReply = {
+  name: string;
+  response: string;
+};
 type AutoCollabMode = "off" | "intent" | "main" | "always";
 type MentionDispatchMode = "async" | "sync";
 
@@ -89,6 +93,10 @@ const DEFAULT_SESSION_SEND_TIMEOUT_SECONDS = parseTimeoutSeconds(
   getServerEnvValue("CLAWE_SESSION_SEND_TIMEOUT_SECONDS"),
   45,
 );
+const LEAD_SYNTHESIS_TIMEOUT_SECONDS = parseTimeoutSeconds(
+  getServerEnvValue("CLAWE_LEAD_SYNTHESIS_TIMEOUT_SECONDS"),
+  45,
+);
 const CHAT_DEBUG_ENABLED =
   (getServerEnvValue("CLAWE_CHAT_DEBUG") ?? "").trim().toLowerCase() ===
   "true";
@@ -96,6 +104,10 @@ const MARK_SYNC_NOTIFICATIONS_DELIVERED =
   (getServerEnvValue("CLAWE_MARK_SYNC_NOTIFICATIONS_DELIVERED") ?? "")
     .trim()
     .toLowerCase() === "true";
+const APPEND_LEAD_SYNTHESIS =
+  (getServerEnvValue("CLAWE_APPEND_LEAD_SYNTHESIS") ?? "true")
+    .trim()
+    .toLowerCase() !== "false";
 
 function debugChat(event: string, details: Record<string, unknown>) {
   if (!CHAT_DEBUG_ENABLED) return;
@@ -409,6 +421,73 @@ function buildQueuedDispatchReply(targets: MentionTarget[]): string {
   return `Routed to ${targets.map((target) => target.name).join(", ")}. They were notified and will pick this up shortly.`;
 }
 
+function buildLeadSynthesisPrompt({
+  sourceName,
+  userRequest,
+  specialistReplies,
+}: {
+  sourceName: string;
+  userRequest: string;
+  specialistReplies: SpecialistReply[];
+}): string {
+  const updates = specialistReplies
+    .map((reply, index) => `${index + 1}. ${reply.name}: ${reply.response}`)
+    .join("\n");
+  return [
+    `You are ${sourceName}, the squad lead.`,
+    "Create a concise team synthesis for the user with: goal, task split, and immediate next step.",
+    `User request: ${userRequest || "(no explicit request provided)"}`,
+    "Specialist updates:",
+    updates,
+  ].join("\n\n");
+}
+
+async function appendLeadSynthesis({
+  tenant,
+  sourceSessionKey,
+  sourceName,
+  userRequest,
+  dispatchReply,
+  specialistReplies,
+}: {
+  tenant: Parameters<typeof getConnection>[0];
+  sourceSessionKey: string;
+  sourceName: string;
+  userRequest: string;
+  dispatchReply: string;
+  specialistReplies: SpecialistReply[];
+}): Promise<{ reply: string; appended: boolean }> {
+  if (!APPEND_LEAD_SYNTHESIS) return { reply: dispatchReply, appended: false };
+  if (!isAgentSessionKey(sourceSessionKey)) {
+    return { reply: dispatchReply, appended: false };
+  }
+  if (specialistReplies.length < 2) {
+    return { reply: dispatchReply, appended: false };
+  }
+
+  try {
+    const synthesisResult = await sessionsSend(
+      getConnection(tenant),
+      sourceSessionKey,
+      buildLeadSynthesisPrompt({
+        sourceName,
+        userRequest,
+        specialistReplies,
+      }),
+      LEAD_SYNTHESIS_TIMEOUT_SECONDS,
+    );
+    const synthesisText = extractSessionsSendReply(synthesisResult);
+    if (!synthesisText) return { reply: dispatchReply, appended: false };
+
+    return {
+      reply: `${dispatchReply}\n\n${sourceName}: ${synthesisText}`,
+      appended: true,
+    };
+  } catch {
+    return { reply: dispatchReply, appended: false };
+  }
+}
+
 function toMentionTarget(agent: AgentSummary, token: string): MentionTarget {
   return {
     token,
@@ -434,11 +513,13 @@ async function dispatchMentionedMessage({
 }): Promise<{
   reply: string;
   successes: number;
+  specialistReplies: SpecialistReply[];
 }> {
   const connection = getConnection(tenant);
   const prompt =
     message.trim() || "You were mentioned with no additional text.";
   const responseLines: string[] = [];
+  const specialistReplies: SpecialistReply[] = [];
   const dispatchResults = await Promise.all(
     targets.map(async (target) => {
       const routedPrompt = [
@@ -472,6 +553,10 @@ async function dispatchMentionedMessage({
   for (const item of dispatchResults) {
     if (item.response) {
       responseLines.push(`${item.target.name}: ${item.response}`);
+      specialistReplies.push({
+        name: item.target.name,
+        response: item.response,
+      });
       successCount++;
     } else {
       pendingAgents.push(item.target.name);
@@ -495,12 +580,14 @@ async function dispatchMentionedMessage({
     return {
       reply: responseLines.join("\n\n"),
       successes: successCount,
+      specialistReplies,
     };
   }
 
   return {
     reply: `Routed to ${targets.map((t) => t.name).join(", ")}. They were notified and will pick this up shortly.`,
     successes: 0,
+    specialistReplies: [],
   };
 }
 
@@ -900,6 +987,14 @@ export async function POST(request: NextRequest) {
             ? COLLAB_TARGET_DISPATCH_TIMEOUT_SECONDS
             : TARGET_DISPATCH_TIMEOUT_SECONDS,
         });
+        const withSynthesis = await appendLeadSynthesis({
+          tenant: auth.tenant,
+          sourceSessionKey: sessionKey,
+          sourceName,
+          userRequest: dispatchMessage,
+          dispatchReply: dispatch.reply,
+          specialistReplies: dispatch.specialistReplies,
+        });
 
         debugChat("mention_dispatch_completed", {
           sourceSessionKey: sessionKey,
@@ -908,9 +1003,10 @@ export async function POST(request: NextRequest) {
           successCount: dispatch.successes,
           isCollaborativeRoute,
           mode: "sync",
+          leadSynthesisAppended: withSynthesis.appended,
         });
 
-        return new Response(dispatch.reply, {
+        return new Response(withSynthesis.reply, {
           status: 200,
           headers: {
             "Content-Type": "text/plain; charset=utf-8",
@@ -990,6 +1086,14 @@ export async function POST(request: NextRequest) {
           tenant: auth.tenant,
           timeoutSeconds: COLLAB_TARGET_DISPATCH_TIMEOUT_SECONDS,
         });
+        const withSynthesis = await appendLeadSynthesis({
+          tenant: auth.tenant,
+          sourceSessionKey: sessionKey,
+          sourceName,
+          userRequest: dispatchMessage,
+          dispatchReply: dispatch.reply,
+          specialistReplies: dispatch.specialistReplies,
+        });
 
         debugChat("auto_collab_dispatch_completed", {
           sourceSessionKey: sessionKey,
@@ -997,9 +1101,10 @@ export async function POST(request: NextRequest) {
           targetSessionKeys,
           successCount: dispatch.successes,
           mode: "sync",
+          leadSynthesisAppended: withSynthesis.appended,
         });
 
-        return new Response(dispatch.reply, {
+        return new Response(withSynthesis.reply, {
           status: 200,
           headers: {
             "Content-Type": "text/plain; charset=utf-8",
