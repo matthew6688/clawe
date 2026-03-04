@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
+import { appendFile, mkdir } from "node:fs/promises";
+import path from "node:path";
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { logger as baseLogger } from "@/lib/logger";
 
 type RequestLogDetails = Record<string, unknown>;
+const REQUEST_LOG_FILE = process.env.CLAWE_REQUEST_LOG_FILE?.trim() || "";
+let requestLogWriteQueue: Promise<void> = Promise.resolve();
 
 function isSensitiveKey(key: string): boolean {
   return /(key|token|secret|password|authorization)/i.test(key);
@@ -35,6 +39,26 @@ function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error";
 }
 
+function writeRequestLogLine(record: Record<string, unknown>) {
+  if (!REQUEST_LOG_FILE) return;
+
+  requestLogWriteQueue = requestLogWriteQueue
+    .then(async () => {
+      const line = `${JSON.stringify(record)}\n`;
+      await mkdir(path.dirname(REQUEST_LOG_FILE), { recursive: true });
+      await appendFile(REQUEST_LOG_FILE, line, "utf8");
+    })
+    .catch((error) => {
+      baseLogger.warn(
+        {
+          err: error,
+          requestLogFile: REQUEST_LOG_FILE,
+        },
+        "request.log_file_write_failed",
+      );
+    });
+}
+
 export type ApiRequestLogger = ReturnType<typeof createApiRequestLogger>;
 
 export function createApiRequestLogger(request: NextRequest, route: string) {
@@ -56,6 +80,17 @@ export function createApiRequestLogger(request: NextRequest, route: string) {
     },
     "request.start",
   );
+  writeRequestLogLine({
+    ts: new Date().toISOString(),
+    event: "request.start",
+    route,
+    requestId,
+    method: request.method,
+    path: request.nextUrl.pathname,
+    query: sanitizeQuery(request),
+    userAgent: request.headers.get("user-agent") ?? null,
+    clientIp: getClientIp(request),
+  });
 
   const finish = (
     response: Response,
@@ -71,6 +106,17 @@ export function createApiRequestLogger(request: NextRequest, route: string) {
       },
       message,
     );
+    writeRequestLogLine({
+      ts: new Date().toISOString(),
+      event: message,
+      route,
+      requestId,
+      method: request.method,
+      path: request.nextUrl.pathname,
+      status: response.status,
+      durationMs: Date.now() - startedAt,
+      ...details,
+    });
     return response;
   };
 
@@ -96,6 +142,18 @@ export function createApiRequestLogger(request: NextRequest, route: string) {
       },
       "request.failed",
     );
+    writeRequestLogLine({
+      ts: new Date().toISOString(),
+      event: "request.failed",
+      route,
+      requestId,
+      method: request.method,
+      path: request.nextUrl.pathname,
+      status,
+      durationMs: Date.now() - startedAt,
+      error: message,
+      ...details,
+    });
     return finish(
       NextResponse.json({ ok: false, error: message, requestId }, { status }),
       "request.failed.response",
