@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   Globe,
   KeyRound,
+  Bot,
   Plug,
 } from "lucide-react";
 import {
@@ -25,6 +26,11 @@ const settingsItems = [
     title: "General",
     url: "/settings/general",
     icon: Settings2,
+  },
+  {
+    title: "Agents",
+    url: "/settings/agents",
+    icon: Bot,
   },
   {
     title: "API Keys",
