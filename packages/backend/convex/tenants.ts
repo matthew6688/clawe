@@ -169,6 +169,7 @@ export const setApiKeys = mutation({
     machineToken: v.optional(v.string()),
     anthropicApiKey: v.optional(v.string()),
     openaiApiKey: v.optional(v.string()),
+    kimiApiKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const tenantId = await resolveTenantId(ctx, args);
@@ -183,6 +184,9 @@ export const setApiKeys = mutation({
     }
     if (args.openaiApiKey !== undefined) {
       patch.openaiApiKey = args.openaiApiKey;
+    }
+    if (args.kimiApiKey !== undefined) {
+      patch.kimiApiKey = args.kimiApiKey;
     }
 
     await ctx.db.patch(tenantId, patch);
@@ -201,14 +205,23 @@ export const getApiKeys = query({
       .first();
 
     if (!membership)
-      return { anthropicApiKey: undefined, openaiApiKey: undefined };
+      return {
+        anthropicApiKey: undefined,
+        openaiApiKey: undefined,
+        kimiApiKey: undefined,
+      };
 
     const tenant = await ctx.db
       .query("tenants")
       .withIndex("by_account", (q) => q.eq("accountId", membership.accountId))
       .first();
 
-    if (!tenant) return { anthropicApiKey: undefined, openaiApiKey: undefined };
+    if (!tenant)
+      return {
+        anthropicApiKey: undefined,
+        openaiApiKey: undefined,
+        kimiApiKey: undefined,
+      };
 
     const mask = (key: string | undefined) => {
       if (!key) return undefined;
@@ -219,6 +232,12 @@ export const getApiKeys = query({
     return {
       anthropicApiKey: mask(tenant.anthropicApiKey),
       openaiApiKey: mask(tenant.openaiApiKey),
+      kimiApiKey: mask(
+        tenant.kimiApiKey ??
+          (tenant.openaiApiKey?.startsWith("sk-kimi-")
+            ? tenant.openaiApiKey
+            : undefined),
+      ),
     };
   },
 });

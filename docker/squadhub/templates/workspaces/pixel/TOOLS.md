@@ -2,15 +2,31 @@
 
 ## Image Generation
 
-Use the `openai-image-gen` skill for creating images. Read the skill's SKILL.md for full usage — OpenClaw resolves the script path automatically.
+Use the local `seedance-image-gen` skill script for image generation.
 
-Quick reference (the skill handles paths):
+Quick reference:
 
-- GPT image models: `--model gpt-image-1` (recommended, supports multiple images)
-- DALL-E 3: `--model dall-e-3` (1 image at a time, good for hero images)
-- Key flags: `--prompt`, `--count`, `--size`, `--quality`, `--out-dir`
+```bash
+node ./skills/seedance-image-gen.mjs \
+  --prompt "A modern SaaS hero illustration, soft gradients, clean geometry" \
+  --count 1 \
+  --size 1536x1024 \
+  --out-dir ./assets/seedance
+```
 
-Output: images + `prompts.json` + `index.html` gallery.
+Required environment variable:
+
+- `SEEDANCE_API_KEY`
+
+Optional environment variables:
+
+- `SEEDANCE_MODEL` (default: `doubao-seedream-4-0-250828`)
+- `SEEDANCE_BASE_URL` (default: `https://ark.cn-beijing.volces.com/api/v3`)
+- CLI overrides: `--model`, `--response-format`
+
+If your Volcengine account exposes a different Seedance model id, pass it with `--model`.
+
+Output: local image files + manifest JSON in the output directory.
 
 ## Asset Specs
 

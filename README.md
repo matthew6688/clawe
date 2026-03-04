@@ -77,7 +77,7 @@ This script will:
 **Development:**
 
 ```bash
-# Start squadhub gateway only (use local web dev server)
+# Start squadhub gateway + watcher (use local web dev server)
 pnpm dev:docker
 
 # In another terminal, start web + Convex
@@ -250,13 +250,13 @@ pnpm install
 # Terminal 1: Start Convex dev server
 pnpm convex:dev
 
-# Terminal 2: Start squadhub gateway in Docker
+# Terminal 2: Start squadhub + watcher in Docker
 pnpm dev:docker
 
 # Terminal 3: Start web dashboard
 pnpm dev:web
 
-# Or run everything together (Convex + web, but not squadhub)
+# Or run everything together (Convex + web, Docker still needed for squadhub/watcher)
 pnpm dev
 ```
 

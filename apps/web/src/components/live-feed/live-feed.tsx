@@ -63,19 +63,63 @@ export const LiveFeed = ({ className, limit = 50 }: LiveFeedProps) => {
   const [activeFilter, setActiveFilter] = useState<FeedFilter>("all");
 
   const activities = useQuery(api.activities.feed, { limit });
+  const dedupedActivities = useMemo(() => {
+    if (!activities) return [];
+
+    const heartbeatSeen = new Set<string>();
+    const notificationSeen = new Set<string>();
+    const result: FeedActivity[] = [];
+
+    for (const activity of activities as FeedActivity[]) {
+      const shouldRequireAgent =
+        activity.type === "agent_heartbeat" ||
+        activity.type === "notification_sent" ||
+        activity.type === "message_sent";
+      if (shouldRequireAgent && !activity.agent) {
+        // Hide stale activity rows that reference removed/unknown agents.
+        continue;
+      }
+
+      if (activity.type === "agent_heartbeat") {
+        const agentKey = String(
+          activity.agent?._id ?? activity.agentId ?? activity._id,
+        );
+        if (heartbeatSeen.has(agentKey)) {
+          continue;
+        }
+        heartbeatSeen.add(agentKey);
+      }
+
+      if (activity.type === "notification_sent") {
+        const agentKey = String(activity.agent?._id ?? activity.agentId ?? "");
+        const minuteBucket = Math.floor(activity.createdAt / 60000);
+        // A single routing action can fan out to multiple agents; collapse
+        // those per-source bursts into one feed row per minute.
+        const dedupeKey = `${agentKey}:${minuteBucket}`;
+        if (notificationSeen.has(dedupeKey)) {
+          continue;
+        }
+        notificationSeen.add(dedupeKey);
+      }
+
+      result.push(activity);
+    }
+
+    return result;
+  }, [activities]);
 
   const filteredActivities = useMemo(() => {
     if (!activities) return [];
 
     const filterConfig = FILTER_CONFIG.find((f) => f.id === activeFilter);
     if (!filterConfig || filterConfig.types.length === 0) {
-      return activities as FeedActivity[];
+      return dedupedActivities;
     }
 
-    return (activities as FeedActivity[]).filter((activity) =>
+    return dedupedActivities.filter((activity) =>
       filterConfig.types.includes(activity.type),
     );
-  }, [activities, activeFilter]);
+  }, [activities, dedupedActivities, activeFilter]);
 
   const filterCounts = useMemo((): Record<FeedFilter, number> => {
     if (!activities) {
@@ -83,13 +127,13 @@ export const LiveFeed = ({ className, limit = 50 }: LiveFeedProps) => {
     }
 
     const counts: Record<FeedFilter, number> = {
-      all: activities.length,
+      all: dedupedActivities.length,
       tasks: 0,
       status: 0,
       heartbeats: 0,
     };
 
-    for (const activity of activities as FeedActivity[]) {
+    for (const activity of dedupedActivities) {
       for (const filter of FILTER_CONFIG) {
         if (filter.types.includes(activity.type)) {
           counts[filter.id]++;
@@ -98,7 +142,7 @@ export const LiveFeed = ({ className, limit = 50 }: LiveFeedProps) => {
     }
 
     return counts;
-  }, [activities]);
+  }, [activities, dedupedActivities]);
 
   return (
     <div

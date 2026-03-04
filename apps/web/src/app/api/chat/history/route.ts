@@ -53,8 +53,17 @@ export async function GET(request: NextRequest) {
       },
     );
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Unknown error";
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+    console.warn("[chat.history] Falling back to empty history", error);
+    return NextResponse.json(
+      {
+        messages: [],
+        thinkingLevel: null,
+      },
+      {
+        headers: {
+          "Cache-Control": "no-store, no-cache, must-revalidate",
+        },
+      },
+    );
   }
 }

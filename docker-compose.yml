@@ -9,10 +9,24 @@ services:
     environment:
       - NODE_ENV=production
       - NEXT_PUBLIC_CONVEX_URL=${CONVEX_URL}
+      - CONVEX_URL=${CONVEX_URL}
       - NEXT_PUBLIC_CLAWE_EDITION=${CLAWE_EDITION:-oss}
+      - AUTH_PROVIDER=${AUTH_PROVIDER:-nextauth}
+      - NEXT_PUBLIC_AUTH_PROVIDER=${AUTH_PROVIDER:-nextauth}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      - AUTH_SECRET=${NEXTAUTH_SECRET}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+      - AUTO_LOGIN_EMAIL=${AUTO_LOGIN_EMAIL:-dev@clawe.local}
+      - NEXT_PUBLIC_AUTO_LOGIN_EMAIL=${AUTO_LOGIN_EMAIL:-dev@clawe.local}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:-}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:-}
       - SQUADHUB_URL=http://squadhub:18789
       - SQUADHUB_TOKEN=${SQUADHUB_TOKEN}
       - SQUADHUB_STATE_DIR=/squadhub-data/config
+      - CLAWE_MENTION_DISPATCH_MODE=${CLAWE_MENTION_DISPATCH_MODE:-sync}
+      - CLAWE_MARK_SYNC_NOTIFICATIONS_DELIVERED=${CLAWE_MARK_SYNC_NOTIFICATIONS_DELIVERED:-true}
+      - CLAWE_SESSION_SEND_TIMEOUT_SECONDS=${CLAWE_SESSION_SEND_TIMEOUT_SECONDS:-45}
+      - CLAWE_HEARTBEAT_CRON_MODE=${CLAWE_HEARTBEAT_CRON_MODE:-off}
     volumes:
       - squadhub-data:/squadhub-data:ro
     depends_on:
@@ -29,6 +43,9 @@ services:
     environment:
       - SQUADHUB_TOKEN=${SQUADHUB_TOKEN}
       - CONVEX_URL=${CONVEX_URL}
+      - SEEDANCE_API_KEY=${SEEDANCE_API_KEY}
+      - SEEDANCE_MODEL=${SEEDANCE_MODEL:-doubao-seedream-4-0-250828}
+      - SEEDANCE_BASE_URL=${SEEDANCE_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
     volumes:
       - squadhub-data:/data
     healthcheck:
@@ -46,6 +63,7 @@ services:
     environment:
       - CONVEX_URL=${CONVEX_URL}
       - WATCHER_TOKEN=${WATCHER_TOKEN}
+      - SQUADHUB_INTERNAL_URL=http://squadhub:18789
     depends_on:
       squadhub:
         condition: service_healthy

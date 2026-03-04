@@ -1,23 +1,34 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
-import { verifyToken } from "@/lib/auth/verify-token";
 
-const AUTH_PROVIDER = process.env.NEXT_PUBLIC_AUTH_PROVIDER ?? "nextauth";
+const PUBLIC_PATHS = [
+  "/auth/login",
+  "/api/auth",
+  "/api/health",
+  "/api/squadhub/health",
+];
 
-const PUBLIC_PATHS = ["/auth/login", "/api/auth", "/api/health"];
-
-function extractToken(request: NextRequest): string | null {
-  if (AUTH_PROVIDER === "nextauth") {
-    const cookie =
-      request.cookies.get("authjs.session-token") ??
-      request.cookies.get("__Secure-authjs.session-token");
-    return cookie?.value ?? null;
-  }
-
-  // Cognito: token is in the Authorization header (API routes only).
+function extractBearerToken(request: NextRequest): string | null {
   const header = request.headers.get("authorization");
   if (!header?.startsWith("Bearer ")) return null;
   return header.slice(7);
+}
+
+function extractNextAuthCookieToken(request: NextRequest): string | null {
+  const cookie =
+    request.cookies.get("authjs.session-token") ??
+    request.cookies.get("__Secure-authjs.session-token");
+  if (cookie?.value) return cookie.value;
+
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  const match = cookieHeader.match(
+    /(?:^|;\s*)(?:authjs\.session-token|__Secure-authjs\.session-token)=([^;]+)/,
+  );
+  if (match?.[1]) {
+    return decodeURIComponent(match[1]);
+  }
+
+  return null;
 }
 
 function unauthorized(message: string) {
@@ -34,28 +45,24 @@ export async function proxy(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // Cognito page navigations carry no token — client-side useAuth guards those.
+  // Page-level auth is handled by the client providers.
+  // Middleware only guards API routes.
   const isApiRoute = pathname.startsWith("/api/");
-  if (AUTH_PROVIDER === "cognito" && !isApiRoute) {
+  if (!isApiRoute) {
     return NextResponse.next();
   }
 
-  const token = extractToken(request);
-
-  if (!token) {
-    return isApiRoute
-      ? unauthorized("Unauthorized")
-      : NextResponse.redirect(new URL("/auth/login", request.url));
+  const bearerToken = extractBearerToken(request);
+  if (bearerToken) {
+    return NextResponse.next();
   }
 
-  const payload = await verifyToken(token);
-  if (!payload) {
-    return isApiRoute
-      ? unauthorized("Invalid token")
-      : NextResponse.redirect(new URL("/auth/login", request.url));
+  const cookieToken = extractNextAuthCookieToken(request);
+  if (cookieToken) {
+    return NextResponse.next();
   }
 
-  return NextResponse.next();
+  return unauthorized("Unauthorized");
 }
 
 export const config = {

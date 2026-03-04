@@ -96,6 +96,7 @@ const KeyRow = ({
         <div className="relative max-w-sm flex-1">
           <Input
             type={showKey ? "text" : "password"}
+            autoComplete="new-password"
             placeholder={placeholder}
             value={inputValue}
             onChange={(e) => onInputChange(e.target.value)}
@@ -177,10 +178,13 @@ export const ApiKeysSettings = () => {
 
   const [editingAnthropic, setEditingAnthropic] = useState(false);
   const [editingOpenai, setEditingOpenai] = useState(false);
+  const [editingKimi, setEditingKimi] = useState(false);
   const [anthropicKey, setAnthropicKey] = useState("");
   const [openaiKey, setOpenaiKey] = useState("");
+  const [kimiKey, setKimiKey] = useState("");
   const [anthropicValid, setAnthropicValid] = useState<boolean | null>(null);
   const [openaiValid, setOpenaiValid] = useState<boolean | null>(null);
+  const [kimiValid, setKimiValid] = useState<boolean | null>(null);
   const isCloud = config.isCloud;
 
   const anthropicValidation = useMutation({
@@ -209,10 +213,23 @@ export const ApiKeysSettings = () => {
     onError: () => setOpenaiValid(false),
   });
 
+  const kimiValidation = useMutation({
+    mutationFn: async (apiKey: string) => {
+      const { data } = await apiClient.post<{
+        valid: boolean;
+        error?: string;
+      }>("/api/tenant/validate-key", { provider: "kimi", apiKey });
+      if (!data.valid) throw new Error(data.error || "Invalid API key");
+      return data;
+    },
+    onSuccess: () => setKimiValid(true),
+    onError: () => setKimiValid(false),
+  });
+
   const anthropicSave = useMutation({
     mutationFn: async (key: string) => {
       await setApiKeysMutation({ anthropicApiKey: key });
-      await patchApiKeys(key);
+      await patchApiKeys({ anthropicApiKey: key });
       if (isCloud) {
         await apiClient.post("/api/tenant/squadhub/restart");
       }
@@ -232,7 +249,7 @@ export const ApiKeysSettings = () => {
   const openaiSave = useMutation({
     mutationFn: async (key: string) => {
       await setApiKeysMutation({ openaiApiKey: key });
-      await patchApiKeys(undefined, key);
+      await patchApiKeys({ openaiApiKey: key });
       if (isCloud) {
         await apiClient.post("/api/tenant/squadhub/restart");
       }
@@ -246,6 +263,26 @@ export const ApiKeysSettings = () => {
     },
     onError: (error) => {
       toast.error(error.message || "Failed to save OpenAI API key");
+    },
+  });
+
+  const kimiSave = useMutation({
+    mutationFn: async (key: string) => {
+      await setApiKeysMutation({ kimiApiKey: key });
+      await patchApiKeys({ kimiApiKey: key });
+      if (isCloud) {
+        await apiClient.post("/api/tenant/squadhub/restart");
+      }
+    },
+    onSuccess: () => {
+      setEditingKimi(false);
+      setKimiKey("");
+      setKimiValid(null);
+      kimiValidation.reset();
+      toast.success("Kimi API key saved and applied");
+    },
+    onError: (error) => {
+      toast.error(error.message || "Failed to save Kimi API key");
     },
   });
 
@@ -323,6 +360,34 @@ export const ApiKeysSettings = () => {
           onSave={() => openaiSave.mutate(openaiKey)}
           isSaving={openaiSave.isPending}
         />
+
+        <KeyRow
+          label="Kimi"
+          maskedValue={apiKeys.kimiApiKey ?? undefined}
+          placeholder="sk-kimi-..."
+          isEditing={editingKimi}
+          onEdit={() => setEditingKimi(true)}
+          onCancel={() => {
+            setEditingKimi(false);
+            setKimiKey("");
+            setKimiValid(null);
+            kimiValidation.reset();
+          }}
+          inputValue={kimiKey}
+          onInputChange={(value) => {
+            setKimiKey(value);
+            setKimiValid(null);
+            kimiValidation.reset();
+          }}
+          isValid={kimiValid}
+          isValidating={kimiValidation.isPending}
+          validationError={
+            kimiValidation.isError ? kimiValidation.error.message : undefined
+          }
+          onValidate={() => kimiValidation.mutate(kimiKey)}
+          onSave={() => kimiSave.mutate(kimiKey)}
+          isSaving={kimiSave.isPending}
+        />
       </div>
     </div>
   );
@@ -336,6 +401,7 @@ const ApiKeysSettingsSkeleton = () => {
         <Skeleton className="h-4 w-64" />
       </div>
       <div className="space-y-3">
+        <Skeleton className="h-18 w-full rounded-lg" />
         <Skeleton className="h-18 w-full rounded-lg" />
         <Skeleton className="h-18 w-full rounded-lg" />
       </div>

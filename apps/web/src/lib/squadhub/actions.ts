@@ -85,10 +85,14 @@ export async function removeTelegramBot() {
  * as fallback credentials for each provider.
  */
 export async function patchApiKeys(
-  anthropicApiKey?: string,
-  openaiApiKey?: string,
+  keys: {
+    anthropicApiKey?: string;
+    openaiApiKey?: string;
+    kimiApiKey?: string;
+  },
   connection?: SquadhubConnection,
 ) {
+  const { anthropicApiKey, openaiApiKey, kimiApiKey } = keys;
   const env: Record<string, string> = {};
 
   if (anthropicApiKey) {
@@ -96,6 +100,9 @@ export async function patchApiKeys(
   }
   if (openaiApiKey) {
     env.OPENAI_API_KEY = openaiApiKey;
+  }
+  if (kimiApiKey) {
+    env.KIMI_API_KEY = kimiApiKey;
   }
 
   if (Object.keys(env).length === 0) return;

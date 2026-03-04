@@ -1,10 +1,16 @@
-import { getConvexUrl } from "@/lib/runtime-config";
+import {
+  getAuthProvider,
+  getClaweEdition,
+  getConvexUrl,
+} from "@/lib/runtime-config";
 
 export const config = {
-  isCloud: process.env.NEXT_PUBLIC_CLAWE_EDITION === "cloud",
-  authProvider: (process.env.NEXT_PUBLIC_AUTH_PROVIDER ?? "nextauth") as
-    | "nextauth"
-    | "cognito",
+  get isCloud() {
+    return getClaweEdition() === "cloud";
+  },
+  get authProvider() {
+    return getAuthProvider();
+  },
   get convexUrl() {
     return getConvexUrl();
   },

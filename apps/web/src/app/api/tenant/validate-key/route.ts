@@ -45,6 +45,23 @@ export const POST = async (request: NextRequest) => {
       return NextResponse.json({ valid: true });
     }
 
+    if (provider === "kimi") {
+      const trimmed = apiKey.trim();
+      if (!trimmed.startsWith("sk-kimi-")) {
+        return NextResponse.json({
+          valid: false,
+          error: "Kimi keys start with sk-kimi-",
+        });
+      }
+      if (trimmed.length < 16) {
+        return NextResponse.json({
+          valid: false,
+          error: "Key is too short",
+        });
+      }
+      return NextResponse.json({ valid: true });
+    }
+
     return NextResponse.json(
       { valid: false, error: `Unknown provider: ${provider}` },
       { status: 400 },

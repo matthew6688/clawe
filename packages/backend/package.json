@@ -27,7 +27,7 @@
     "./dev-jwks/private.pem": "./convex/dev-jwks/private.pem"
   },
   "scripts": {
-    "dev": "sh -c '../../scripts/sync-convex-env.sh & convex dev'",
+    "dev": "../../scripts/convex-dev-safe.sh",
     "debug": "convex dev",
     "deploy": "convex deploy",
     "check-types": "tsc --noEmit"

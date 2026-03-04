@@ -46,7 +46,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
     export OPENCLAW_PORT="${PORT}"
     export CONVEX_URL="${CONVEX_URL:-}"
     
-    envsubst '$OPENCLAW_PORT $OPENCLAW_TOKEN $CONVEX_URL' < "$TEMPLATES_DIR/config.template.json" > "$CONFIG_FILE"
+    envsubst '$OPENCLAW_PORT $OPENCLAW_TOKEN $CONVEX_URL $SEEDANCE_API_KEY $SEEDANCE_MODEL $SEEDANCE_BASE_URL' < "$TEMPLATES_DIR/config.template.json" > "$CONFIG_FILE"
     
     echo "==> Setup complete."
 else

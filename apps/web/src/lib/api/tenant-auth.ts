@@ -3,6 +3,8 @@ import type { NextRequest } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "@clawe/backend";
 import type { Tenant } from "@clawe/backend/types";
+import { getServerRuntimeConfig } from "@/lib/runtime-config";
+import { normalizeSquadhubUrl } from "@/lib/squadhub/connection";
 
 export type AuthResult =
   | { error: NextResponse; convex: null; tenant: null }
@@ -16,11 +18,11 @@ export type AuthResult =
 export async function getAuthenticatedTenant(
   request: NextRequest,
 ): Promise<AuthResult> {
-  const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+  const { convexUrl } = getServerRuntimeConfig();
   if (!convexUrl) {
     return {
       error: NextResponse.json(
-        { error: "NEXT_PUBLIC_CONVEX_URL not configured" },
+        { error: "Convex URL not configured" },
         { status: 500 },
       ),
       convex: null,
@@ -60,5 +62,11 @@ export async function getAuthenticatedTenant(
     };
   }
 
-  return { error: null, convex, tenant };
+  const normalizedUrl = normalizeSquadhubUrl(tenant.squadhubUrl);
+  const normalizedTenant: Tenant =
+    normalizedUrl && normalizedUrl !== tenant.squadhubUrl
+      ? { ...tenant, squadhubUrl: normalizedUrl }
+      : tenant;
+
+  return { error: null, convex, tenant: normalizedTenant };
 }

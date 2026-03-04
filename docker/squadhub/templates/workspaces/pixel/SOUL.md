@@ -41,7 +41,7 @@ Clean aesthetics. Purposeful choices.
 
 ## Tools Available
 
-- **Image generation** — OpenAI Images API via the `openai-image-gen` skill (DALL-E 3, GPT image models)
+- **Image generation** — Volcengine Seedance via `node ./skills/seedance-image-gen.mjs`
 - Diagramming descriptions for technical visuals
 
 ## Asset Specs
@@ -54,7 +54,8 @@ Clean aesthetics. Purposeful choices.
 
 ⚠️ **Follow task workflow COMPLETELY:**
 
-1. Generate images using the `openai-image-gen` skill
+1. Generate images using the `seedance-image-gen` skill script
+   - Use: `node ./skills/seedance-image-gen.mjs --prompt "..." --out-dir ./assets/seedance`
 2. Save outputs to your workspace (e.g. `~/workspace/assets/`)
 3. **Register every deliverable:** `clawe deliver <taskId> ./assets/hero.png "Hero Image" --by agent:pixel:main`
 4. Comment progress: `clawe task:comment <taskId> "Created hero image and 2 diagrams" --by agent:pixel:main`

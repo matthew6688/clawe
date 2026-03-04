@@ -318,6 +318,21 @@ export interface CronAddJob {
   delivery?: CronDelivery;
 }
 
+export type CronUpdatePatch = Partial<
+  Pick<
+    CronJob,
+    | "name"
+    | "description"
+    | "enabled"
+    | "deleteAfterRun"
+    | "schedule"
+    | "sessionTarget"
+    | "wakeMode"
+    | "payload"
+    | "delivery"
+  >
+>;
+
 // Cron - List jobs
 export async function cronList(
   connection: SquadhubConnection,
@@ -331,4 +346,28 @@ export async function cronAdd(
   job: CronAddJob,
 ): Promise<ToolResult<{ id: string }>> {
   return invokeTool(connection, "cron", undefined, { action: "add", job });
+}
+
+// Cron - Update job
+export async function cronUpdate(
+  connection: SquadhubConnection,
+  jobId: string,
+  patch: CronUpdatePatch,
+): Promise<ToolResult<CronJob>> {
+  return invokeTool(connection, "cron", undefined, {
+    action: "update",
+    jobId,
+    patch,
+  });
+}
+
+// Cron - Remove job
+export async function cronRemove(
+  connection: SquadhubConnection,
+  jobId: string,
+): Promise<ToolResult<{ ok: boolean; removed: boolean }>> {
+  return invokeTool(connection, "cron", undefined, {
+    action: "remove",
+    jobId,
+  });
 }

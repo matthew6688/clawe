@@ -11,6 +11,8 @@ export {
   sessionsSend,
   cronList,
   cronAdd,
+  cronUpdate,
+  cronRemove,
   listPairingRequests,
   approvePairingCode,
   parseToolText,
@@ -27,6 +29,7 @@ export type {
   CronDelivery,
   CronPayload,
   CronJobState,
+  CronUpdatePatch,
 } from "./client.js";
 
 // Gateway Client

@@ -1,9 +1,11 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@clawe/backend";
 import { cn } from "@clawe/ui/lib/utils";
 import { Loader2 } from "lucide-react";
+import { useApiClient } from "@/hooks/use-api-client";
 import { AgentsPanelHeader } from "./agents-panel-header";
 import { AgentsPanelList } from "./agents-panel-list";
 
@@ -20,9 +22,21 @@ export const AgentsPanel = ({
   selectedAgentIds = [],
   onSelectionChange,
 }: AgentsPanelProps) => {
+  const apiClient = useApiClient();
+  const reseedTriggeredRef = useRef(false);
   const agents = useQuery(api.agents.squad, {});
 
   const total = agents?.length ?? 0;
+
+  useEffect(() => {
+    if (!agents || agents.length > 0 || reseedTriggeredRef.current) return;
+    reseedTriggeredRef.current = true;
+
+    void apiClient.post("/api/tenant/provision").catch((error) => {
+      console.warn("[agents-panel] Failed to auto-reseed default agents", error);
+      reseedTriggeredRef.current = false;
+    });
+  }, [agents, apiClient]);
 
   const handleToggleAgent = (agentId: string) => {
     if (!onSelectionChange) return;

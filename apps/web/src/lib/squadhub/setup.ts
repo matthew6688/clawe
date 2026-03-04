@@ -3,11 +3,13 @@ import { api } from "@clawe/backend";
 import {
   cronList,
   cronAdd,
+  cronUpdate,
   checkHealth,
   type SquadhubConnection,
   type CronAddJob,
   type CronJob,
 } from "@clawe/shared/squadhub";
+import { getServerEnvValue } from "@/lib/runtime-config";
 
 /**
  * Default agent definitions for new tenants.
@@ -44,7 +46,25 @@ const DEFAULT_AGENTS = [
 ];
 
 const HEARTBEAT_MESSAGE =
-  "Read HEARTBEAT.md and follow it strictly. Check for notifications with 'clawe check'. If nothing needs attention, reply HEARTBEAT_OK.";
+  "HEARTBEAT_PULSE: respond with exactly HEARTBEAT_OK. Do not create tasks, files, plans, or delegation.";
+const HEARTBEAT_TIMEOUT_SECONDS = 45;
+
+type HeartbeatCronMode = "off" | "legacy";
+
+function resolveHeartbeatCronMode(
+  value: string | undefined,
+): HeartbeatCronMode {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "legacy" ? "legacy" : "off";
+}
+
+const HEARTBEAT_CRON_MODE = resolveHeartbeatCronMode(
+  getServerEnvValue("CLAWE_HEARTBEAT_CRON_MODE"),
+);
+
+function isManagedHeartbeatJob(job: CronJob): boolean {
+  return DEFAULT_AGENTS.some((agent) => job.name === `${agent.id}-heartbeat`);
+}
 
 /**
  * Default routines seeded for new tenants.
@@ -139,15 +159,65 @@ async function setupCrons(connection: SquadhubConnection): Promise<{
     };
   }
 
-  const existingNames = new Set(
-    result.result.details.jobs.map((j: CronJob) => j.name),
-  );
+  const jobs = result.result.details.jobs as CronJob[];
+  const existingJobsByName = new Map(jobs.map((job) => [job.name, job]));
+
+  if (HEARTBEAT_CRON_MODE === "off") {
+    for (const job of jobs) {
+      if (!isManagedHeartbeatJob(job)) continue;
+      count++;
+
+      if (!job.enabled) continue;
+
+      const disableResult = await cronUpdate(connection, job.id, {
+        enabled: false,
+      });
+      if (!disableResult.ok) {
+        errors.push(
+          `Failed to disable ${job.name}: ${disableResult.error?.message}`,
+        );
+      }
+    }
+
+    return { count, errors };
+  }
 
   for (const agent of DEFAULT_AGENTS) {
     const cronName = `${agent.id}-heartbeat`;
+    const existing = existingJobsByName.get(cronName);
 
-    if (existingNames.has(cronName)) {
+    if (existing) {
       count++;
+      const existingTimeout =
+        existing.payload.kind === "agentTurn"
+          ? existing.payload.timeoutSeconds
+          : undefined;
+      const needsUpdate =
+        !existing.enabled ||
+        existing.schedule.kind !== "cron" ||
+        existing.schedule.expr !== agent.cron ||
+        existing.sessionTarget !== "isolated" ||
+        existing.payload.kind !== "agentTurn" ||
+        existing.payload.message !== HEARTBEAT_MESSAGE ||
+        existingTimeout !== HEARTBEAT_TIMEOUT_SECONDS;
+
+      if (!needsUpdate) continue;
+
+      const updateResult = await cronUpdate(connection, existing.id, {
+        enabled: true,
+        schedule: { kind: "cron", expr: agent.cron },
+        sessionTarget: "isolated",
+        payload: {
+          kind: "agentTurn",
+          message: HEARTBEAT_MESSAGE,
+          timeoutSeconds: HEARTBEAT_TIMEOUT_SECONDS,
+        },
+        delivery: { mode: "none" },
+      });
+
+      if (!updateResult.ok) {
+        errors.push(`Failed to update ${cronName}: ${updateResult.error?.message}`);
+      }
       continue;
     }
 
@@ -160,8 +230,7 @@ async function setupCrons(connection: SquadhubConnection): Promise<{
       payload: {
         kind: "agentTurn",
         message: HEARTBEAT_MESSAGE,
-        model: "anthropic/claude-sonnet-4-20250514",
-        timeoutSeconds: 600,
+        timeoutSeconds: HEARTBEAT_TIMEOUT_SECONDS,
       },
       delivery: { mode: "none" },
     };
@@ -208,10 +277,9 @@ async function seedRoutines(convex: ConvexHttpClient): Promise<{
 
 /**
  * Run full tenant provisioning setup:
- * 1. Wait for squadhub to be healthy
- * 2. Register default agents in Convex
- * 3. Setup heartbeat cron jobs on squadhub
- * 4. Seed default routines in Convex
+ * 1. Register default agents in Convex
+ * 2. Configure heartbeat cron jobs when squadhub is reachable
+ * 3. Seed default routines in Convex
  */
 export async function setupTenant(
   connection: SquadhubConnection,
@@ -224,24 +292,22 @@ export async function setupTenant(
   }
   const allErrors: string[] = [];
 
-  // Check squadhub is reachable
-  const health = await checkHealth(connection);
-  if (!health.ok) {
-    return {
-      agents: 0,
-      crons: 0,
-      routines: 0,
-      errors: [`Squadhub not reachable: ${health.error?.message}`],
-    };
-  }
-
   // Register agents
   const agentResult = await registerAgents(convex);
   allErrors.push(...agentResult.errors);
 
-  // Setup crons
-  const cronResult = await setupCrons(connection);
-  allErrors.push(...cronResult.errors);
+  // Setup crons only when squadhub is reachable
+  let cronResult: { count: number; errors: string[] } = {
+    count: 0,
+    errors: [],
+  };
+  const health = await checkHealth(connection);
+  if (health.ok) {
+    cronResult = await setupCrons(connection);
+    allErrors.push(...cronResult.errors);
+  } else {
+    allErrors.push(`Squadhub not reachable: ${health.error?.message}`);
+  }
 
   // Seed routines
   const routineResult = await seedRoutines(convex);

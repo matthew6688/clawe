@@ -189,6 +189,67 @@ describe("useChat", () => {
         }),
       );
     });
+
+    it("sends mention metadata for @agent routing", async () => {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode("Routed response"));
+          controller.close();
+        },
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        body: stream,
+      });
+
+      const { result } = renderHook(() =>
+        useChat({ sessionKey: "agent:main:main" }),
+      );
+
+      await act(async () => {
+        await result.current.sendMessage("@Inky draft a blog outline");
+      });
+
+      const call = mockFetch.mock.calls[0];
+      const init = call?.[1] as { body?: string };
+      const payload = init?.body ? JSON.parse(init.body) : {};
+
+      expect(payload.sessionKey).toBe("agent:main:main");
+      expect(payload.mentions).toEqual(["Inky"]);
+      expect(payload.routedMessage).toBe("draft a blog outline");
+    });
+
+    it("parses mentions in Chinese text without leading spaces", async () => {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode("Routed response"));
+          controller.close();
+        },
+      });
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        body: stream,
+      });
+
+      const { result } = renderHook(() =>
+        useChat({ sessionKey: "agent:main:main" }),
+      );
+
+      await act(async () => {
+        await result.current.sendMessage("请@Inky和@Pixel协作完成首页文案");
+      });
+
+      const call = mockFetch.mock.calls[0];
+      const init = call?.[1] as { body?: string };
+      const payload = init?.body ? JSON.parse(init.body) : {};
+
+      expect(payload.mentions).toEqual(["Inky", "Pixel"]);
+      expect(payload.routedMessage).toBe("请 和 协作完成首页文案");
+    });
   });
 
   describe("abort", () => {

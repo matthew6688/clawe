@@ -12,6 +12,11 @@ export type Message = {
   createdAt?: Date;
 };
 
+type MentionParseResult = {
+  mentions: string[];
+  routedMessage: string;
+};
+
 export type UseChatOptions = {
   sessionKey: string;
   onError?: (error: Error) => void;
@@ -106,6 +111,28 @@ const extractTextContent = (content: unknown): string => {
 const generateId = () =>
   `msg_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
+const parseMentions = (text: string): MentionParseResult => {
+  const mentionPattern = /(^|[^a-zA-Z0-9:_-])@([a-zA-Z0-9:_-]+)/g;
+  const mentions: string[] = [];
+  let match: RegExpExecArray | null;
+
+  while (true) {
+    match = mentionPattern.exec(text);
+    if (!match) break;
+    const mention = match[2]?.trim();
+    if (mention && !mentions.includes(mention)) {
+      mentions.push(mention);
+    }
+  }
+
+  const routedMessage = text
+    .replace(mentionPattern, "$1 ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return { mentions, routedMessage };
+};
+
 export const useChat = ({
   sessionKey,
   onError,
@@ -156,6 +183,8 @@ export const useChat = ({
       setError(null);
 
       try {
+        const { mentions, routedMessage } = parseMentions(trimmed);
+
         // Build messages for API (include history)
         const apiMessages = [
           ...messagesRef.current.map((m) => ({
@@ -172,7 +201,12 @@ export const useChat = ({
             "Content-Type": "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
-          body: JSON.stringify({ sessionKey, messages: apiMessages }),
+          body: JSON.stringify({
+            sessionKey,
+            messages: apiMessages,
+            mentions: mentions.length > 0 ? mentions : undefined,
+            routedMessage: routedMessage || undefined,
+          }),
           signal: abortRef.current.signal,
         });
 

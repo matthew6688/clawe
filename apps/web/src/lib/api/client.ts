@@ -1,10 +1,9 @@
 import axios from "axios";
 import { fetchAuthSession } from "aws-amplify/auth";
-
-const AUTH_PROVIDER = process.env.NEXT_PUBLIC_AUTH_PROVIDER ?? "nextauth";
+import { getAuthProvider } from "@/lib/runtime-config";
 
 export async function fetchAuthToken(): Promise<string | null> {
-  if (AUTH_PROVIDER === "cognito") {
+  if (getAuthProvider() === "cognito") {
     try {
       const session = await fetchAuthSession();
       return session.tokens?.idToken?.toString() ?? null;

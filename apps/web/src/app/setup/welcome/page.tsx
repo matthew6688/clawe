@@ -54,7 +54,8 @@ export default function WelcomePage() {
                 <Key className="text-muted-foreground h-4 w-4" />
               </div>
               <span className="text-muted-foreground text-sm">
-                Your Anthropic API key from{" "}
+                At least one model API key (Anthropic, OpenAI, or Kimi), for
+                example Anthropic from{" "}
                 <a
                   href="https://console.anthropic.com"
                   target="_blank"
@@ -98,7 +99,7 @@ export default function WelcomePage() {
                   continue. Start it with:
                 </p>
                 <pre className="rounded-md bg-red-100 px-3 py-2 text-xs text-red-900 dark:bg-red-950/50 dark:text-red-300">
-                  sudo docker compose up -d squadhub
+                  docker compose up -d squadhub watcher
                 </pre>
                 <p className="text-xs text-red-600 dark:text-red-500">
                   This status will update automatically once the service is
@@ -127,7 +128,7 @@ export default function WelcomePage() {
           </TooltipTrigger>
           {isOffline && (
             <TooltipContent>
-              <p>Start squadhub to continue</p>
+              <p>Start squadhub and watcher to continue</p>
             </TooltipContent>
           )}
         </Tooltip>

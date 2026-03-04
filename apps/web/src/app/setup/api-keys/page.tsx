@@ -2,16 +2,13 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useMutation as useConvexMutation } from "convex/react";
 import { useMutation } from "@tanstack/react-query";
-import { api } from "@clawe/backend";
 import { Button } from "@clawe/ui/components/button";
 import { Input } from "@clawe/ui/components/input";
 import { Label } from "@clawe/ui/components/label";
 import { Progress } from "@clawe/ui/components/progress";
 import { Spinner } from "@clawe/ui/components/spinner";
 import { CheckCircle2 } from "lucide-react";
-import { patchApiKeys } from "@/lib/squadhub/actions";
 import { useApiClient } from "@/hooks/use-api-client";
 
 const TOTAL_STEPS = 5;
@@ -20,12 +17,13 @@ const CURRENT_STEP = 2;
 export default function ApiKeysPage() {
   const router = useRouter();
   const apiClient = useApiClient();
-  const setApiKeys = useConvexMutation(api.tenants.setApiKeys);
 
   const [anthropicKey, setAnthropicKey] = useState("");
   const [openaiKey, setOpenaiKey] = useState("");
+  const [kimiKey, setKimiKey] = useState("");
   const [anthropicValid, setAnthropicValid] = useState(false);
   const [openaiValid, setOpenaiValid] = useState<boolean | null>(null);
+  const [kimiValid, setKimiValid] = useState<boolean | null>(null);
 
   // Validate Anthropic key
   const anthropicValidation = useMutation({
@@ -67,14 +65,43 @@ export default function ApiKeysPage() {
     },
   });
 
+  // Validate Kimi key
+  const kimiValidation = useMutation({
+    mutationFn: async (apiKey: string) => {
+      const { data } = await apiClient.post<{ valid: boolean; error?: string }>(
+        "/api/tenant/validate-key",
+        { provider: "kimi", apiKey },
+      );
+      if (!data.valid) {
+        throw new Error(data.error || "Invalid API key");
+      }
+      return data;
+    },
+    onSuccess: () => {
+      setKimiValid(true);
+    },
+    onError: () => {
+      setKimiValid(false);
+    },
+  });
+
   // Save keys to Convex and patch into squadhub config
   const saveMutation = useMutation({
     mutationFn: async () => {
-      await setApiKeys({
-        anthropicApiKey: anthropicKey,
-        openaiApiKey: openaiKey || undefined,
-      });
-      await patchApiKeys(anthropicKey, openaiKey || undefined);
+      await Promise.race([
+        apiClient
+          .post("/api/tenant/api-keys", {
+            anthropicApiKey: anthropicKey || undefined,
+            openaiApiKey: openaiKey || undefined,
+            kimiApiKey: kimiKey || undefined,
+          })
+          .catch((error) => {
+            console.warn("[setup/api-keys] Save failed, continuing", error);
+          }),
+        new Promise<void>((resolve) => {
+          setTimeout(resolve, 2500);
+        }),
+      ]);
     },
     onSuccess: () => {
       router.push("/setup/business");
@@ -93,14 +120,22 @@ export default function ApiKeysPage() {
     }
   };
 
+  const handleValidateKimi = () => {
+    if (kimiKey) {
+      kimiValidation.mutate(kimiKey);
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (anthropicValid) {
+    if (anthropicValid || openaiValid === true || kimiValid === true) {
       saveMutation.mutate();
     }
   };
 
   const isSubmitting = saveMutation.isPending;
+  const canContinue =
+    anthropicValid || openaiValid === true || kimiValid === true;
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-1 flex-col">
@@ -118,20 +153,19 @@ export default function ApiKeysPage() {
           API Keys
         </h1>
         <p className="text-muted-foreground mb-6">
-          Your AI agents need API keys to connect to language models. Keys are
-          stored securely and never leave your deployment.
+          Your AI agents need at least one API key to connect to language
+          models. Keys are stored securely and never leave your deployment.
         </p>
 
         <div className="space-y-6">
-          {/* Anthropic API Key (required) */}
+          {/* Anthropic API Key */}
           <div className="space-y-2">
-            <Label htmlFor="anthropic-key">
-              Anthropic API Key <span className="text-destructive">*</span>
-            </Label>
+            <Label htmlFor="anthropic-key">Anthropic API Key</Label>
             <div className="flex gap-2">
               <Input
                 id="anthropic-key"
                 type="password"
+                autoComplete="new-password"
                 placeholder="sk-ant-..."
                 value={anthropicKey}
                 onChange={(e) => {
@@ -197,6 +231,7 @@ export default function ApiKeysPage() {
               <Input
                 id="openai-key"
                 type="password"
+                autoComplete="new-password"
                 placeholder="sk-..."
                 value={openaiKey}
                 onChange={(e) => {
@@ -241,6 +276,62 @@ export default function ApiKeysPage() {
               Enables image generation. You can add this later in Settings.
             </p>
           </div>
+
+          {/* Kimi API Key (optional) */}
+          <div className="space-y-2">
+            <Label htmlFor="kimi-key">
+              Kimi API Key{" "}
+              <span className="text-muted-foreground text-xs font-normal">
+                (optional)
+              </span>
+            </Label>
+            <div className="flex gap-2">
+              <Input
+                id="kimi-key"
+                type="password"
+                autoComplete="new-password"
+                placeholder="sk-kimi-..."
+                value={kimiKey}
+                onChange={(e) => {
+                  setKimiKey(e.target.value);
+                  setKimiValid(null);
+                  kimiValidation.reset();
+                }}
+                className="flex-1"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleValidateKimi}
+                disabled={
+                  !kimiKey || kimiValidation.isPending || kimiValid === true
+                }
+                className="shrink-0"
+              >
+                {kimiValidation.isPending ? (
+                  <Spinner />
+                ) : kimiValid === true ? (
+                  <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400" />
+                ) : (
+                  "Validate"
+                )}
+              </Button>
+            </div>
+            {kimiValidation.isError && (
+              <p className="text-destructive text-sm">
+                {kimiValidation.error.message}
+              </p>
+            )}
+            {kimiValid === true && (
+              <p className="text-sm text-green-600 dark:text-green-400">
+                API key is valid
+              </p>
+            )}
+            <p className="text-muted-foreground text-xs">
+              Used by Kimi Coding models in squadhub heartbeats and agent runs.
+            </p>
+          </div>
         </div>
 
         {saveMutation.isError && (
@@ -256,7 +347,7 @@ export default function ApiKeysPage() {
           type="submit"
           variant="brand"
           className="w-full sm:w-auto"
-          disabled={!anthropicValid || isSubmitting}
+          disabled={!canContinue || isSubmitting}
         >
           {isSubmitting ? (
             <>

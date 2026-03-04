@@ -23,7 +23,8 @@ export default function BusinessPage() {
     api.businessContext.get,
     isAuthenticated ? {} : "skip",
   );
-  const canContinue = businessContext !== null && businessContext !== undefined;
+  // Allow setup to proceed even if business context generation is skipped/fails.
+  const canContinue = businessContext !== undefined;
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">

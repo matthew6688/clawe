@@ -4,11 +4,11 @@
   "scripts": {
     "build": "dotenv -e .env -- turbo run build",
     "dev": "dotenv -e .env -- turbo run dev",
-    "dev:docker": "pnpm --filter @clawe/cli... build && pnpm --filter @clawe/squadhub-extensions... build && docker compose up --build squadhub",
+    "dev:docker": "pnpm --filter @clawe/cli... build && pnpm --filter @clawe/squadhub-extensions... build && docker compose up --build squadhub watcher",
     "build:docker": "pnpm --filter @clawe/cli... build && docker compose build --no-cache squadhub",
     "debug": "dotenv -e .env -- turbo run debug",
     "dev:web": "dotenv -e .env -- turbo run dev --filter=@clawe/web",
-    "convex:dev": "dotenv -e .env -- turbo run dev --filter=@clawe/backend",
+    "convex:dev": "./scripts/convex-dev-safe.sh",
     "convex:deploy": "dotenv -e .env -- ./scripts/convex-deploy.sh",
     "lint": "turbo run lint",
     "lint:fix": "turbo run lint:fix",

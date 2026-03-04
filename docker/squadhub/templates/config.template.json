@@ -1,6 +1,9 @@
 {
   "env": {
-    "CONVEX_URL": "${CONVEX_URL}"
+    "CONVEX_URL": "${CONVEX_URL}",
+    "SEEDANCE_API_KEY": "${SEEDANCE_API_KEY}",
+    "SEEDANCE_MODEL": "${SEEDANCE_MODEL}",
+    "SEEDANCE_BASE_URL": "${SEEDANCE_BASE_URL}"
   },
   "auth": {
     "profiles": {
@@ -27,6 +30,7 @@
         "default": true,
         "name": "Clawe",
         "workspace": "/data/workspace",
+        "model": "openai/gpt-4o-mini",
         "identity": {
           "name": "Clawe",
           "emoji": "🦞"
@@ -36,7 +40,7 @@
         "id": "inky",
         "name": "Inky",
         "workspace": "/data/workspace-inky",
-        "model": "anthropic/claude-sonnet-4-20250514",
+        "model": "openai/gpt-4o-mini",
         "identity": {
           "name": "Inky",
           "emoji": "✍️"
@@ -46,7 +50,7 @@
         "id": "pixel",
         "name": "Pixel",
         "workspace": "/data/workspace-pixel",
-        "model": "anthropic/claude-sonnet-4-20250514",
+        "model": "openai/gpt-4o-mini",
         "identity": {
           "name": "Pixel",
           "emoji": "🎨"
@@ -56,7 +60,7 @@
         "id": "scout",
         "name": "Scout",
         "workspace": "/data/workspace-scout",
-        "model": "anthropic/claude-sonnet-4-20250514",
+        "model": "openai/gpt-4o-mini",
         "identity": {
           "name": "Scout",
           "emoji": "🔍"
@@ -70,6 +74,9 @@
     }
   },
   "tools": {
+    "sessions": {
+      "visibility": "all"
+    },
     "agentToAgent": {
       "enabled": true,
       "allow": [
@@ -103,7 +110,14 @@
       "token": "${OPENCLAW_TOKEN}"
     },
     "tools": {
-      "allow": ["gateway"]
+      "allow": [
+        "gateway",
+        "sessions_list",
+        "sessions_send",
+        "message",
+        "cron",
+        "clawe_pairing"
+      ]
     },
     "http": {
       "endpoints": {

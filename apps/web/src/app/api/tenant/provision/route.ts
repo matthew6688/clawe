@@ -6,6 +6,7 @@ import { resolvePlugin } from "@/lib/plugins";
 import { setupTenant } from "@/lib/squadhub/setup";
 import { patchApiKeys } from "@/lib/squadhub/actions";
 import { logger as baseLogger } from "@/lib/logger";
+import { getServerRuntimeConfig } from "@/lib/runtime-config";
 
 const logger = baseLogger.child({ route: "tenant/provision" });
 
@@ -27,10 +28,10 @@ const logger = baseLogger.child({ route: "tenant/provision" });
  * 6. Return { ok: true, tenantId }
  */
 export const POST = async (request: NextRequest) => {
-  const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+  const { convexUrl } = getServerRuntimeConfig();
   if (!convexUrl) {
     return NextResponse.json(
-      { error: "NEXT_PUBLIC_CONVEX_URL not configured" },
+      { error: "Convex URL not configured" },
       { status: 500 },
     );
   }
@@ -159,10 +160,13 @@ export const POST = async (request: NextRequest) => {
       squadhubToken: tenant.squadhubToken,
     };
 
-    if (tenant.anthropicApiKey) {
+    if (tenant.anthropicApiKey || tenant.openaiApiKey || tenant.kimiApiKey) {
       await patchApiKeys(
-        tenant.anthropicApiKey,
-        tenant.openaiApiKey ?? undefined,
+        {
+          anthropicApiKey: tenant.anthropicApiKey ?? undefined,
+          openaiApiKey: tenant.openaiApiKey ?? undefined,
+          kimiApiKey: tenant.kimiApiKey ?? undefined,
+        },
         connection,
       );
       logger.info("API keys patched");

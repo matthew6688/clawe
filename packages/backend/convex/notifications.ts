@@ -1,7 +1,53 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import type { MutationCtx } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
 import { resolveTenantId } from "./lib/auth";
 import { getAgentBySessionKey } from "./lib/helpers";
+
+const NOTIFICATION_DEDUPE_WINDOW_MS = 60_000;
+
+async function findRecentUndeliveredDuplicate({
+  ctx,
+  tenantId,
+  targetAgentId,
+  sourceAgentId,
+  type,
+  content,
+  now,
+}: {
+  ctx: MutationCtx;
+  tenantId: Id<"tenants">;
+  targetAgentId: Id<"agents">;
+  sourceAgentId?: Id<"agents">;
+  type:
+    | "task_assigned"
+    | "task_mentioned"
+    | "task_completed"
+    | "message_received"
+    | "review_requested"
+    | "blocked"
+    | "custom";
+  content: string;
+  now: number;
+}): Promise<Doc<"notifications"> | undefined> {
+  const recent = await ctx.db
+    .query("notifications")
+    .withIndex("by_tenant_target", (q) =>
+      q.eq("tenantId", tenantId).eq("targetAgentId", targetAgentId),
+    )
+    .order("desc")
+    .take(8);
+
+  return recent.find(
+    (notification) =>
+      !notification.delivered &&
+      notification.type === type &&
+      notification.content === content &&
+      notification.sourceAgentId === sourceAgentId &&
+      now - notification.createdAt <= NOTIFICATION_DEDUPE_WINDOW_MS,
+  );
+}
 
 // Get undelivered notifications for an agent (by session key)
 export const getUndelivered = query({
@@ -158,6 +204,19 @@ export const send = mutation({
       }
     }
 
+    const duplicate = await findRecentUndeliveredDuplicate({
+      ctx,
+      tenantId,
+      targetAgentId: targetAgent._id,
+      sourceAgentId,
+      type: args.type,
+      content: args.content,
+      now,
+    });
+    if (duplicate) {
+      return duplicate._id;
+    }
+
     // Create notification
     const notificationId = await ctx.db.insert("notifications", {
       tenantId,
@@ -228,6 +287,20 @@ export const sendToMany = mutation({
       const targetAgent = agents.find((a) => a.sessionKey === targetSessionKey);
 
       if (targetAgent) {
+        const duplicate = await findRecentUndeliveredDuplicate({
+          ctx,
+          tenantId,
+          targetAgentId: targetAgent._id,
+          sourceAgentId,
+          type: args.type,
+          content: args.content,
+          now,
+        });
+        if (duplicate) {
+          notificationIds.push(duplicate._id);
+          continue;
+        }
+
         const id = await ctx.db.insert("notifications", {
           tenantId,
           targetAgentId: targetAgent._id,

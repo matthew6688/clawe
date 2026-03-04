@@ -18,8 +18,7 @@ import {
 } from "aws-amplify/auth";
 import { Hub } from "aws-amplify/utils";
 import { fetchAuthToken } from "@/lib/api/client";
-
-const AUTH_PROVIDER = process.env.NEXT_PUBLIC_AUTH_PROVIDER ?? "nextauth";
+import { getAuthProvider } from "@/lib/runtime-config";
 
 interface AuthUser {
   email: string;
@@ -199,7 +198,7 @@ const CognitoProvider = ({ children }: { children: ReactNode }) => {
 // ---------------------------------------------------------------------------
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  if (AUTH_PROVIDER === "cognito") {
+  if (getAuthProvider() === "cognito") {
     return <CognitoProvider>{children}</CognitoProvider>;
   }
   return <NextAuthProvider>{children}</NextAuthProvider>;

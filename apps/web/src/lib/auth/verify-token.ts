@@ -1,7 +1,10 @@
 import { CognitoJwtVerifier } from "aws-jwt-verify";
 import type { JWTPayload } from "jose";
 
-const AUTH_PROVIDER = process.env.NEXT_PUBLIC_AUTH_PROVIDER ?? "nextauth";
+const AUTH_PROVIDER =
+  process.env.NEXT_PUBLIC_AUTH_PROVIDER ??
+  process.env.AUTH_PROVIDER ??
+  "nextauth";
 
 export interface VerifiedToken extends JWTPayload {
   sub: string;

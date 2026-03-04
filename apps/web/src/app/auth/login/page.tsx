@@ -7,23 +7,53 @@ import { useMutation } from "convex/react";
 import { api } from "@clawe/backend";
 import { Button } from "@clawe/ui/components/button";
 import { Spinner } from "@clawe/ui/components/spinner";
+import { getAutoLoginEmail } from "@/lib/runtime-config";
 import { useAuth } from "@/providers/auth-provider";
-
-const AUTO_LOGIN_EMAIL = process.env.NEXT_PUBLIC_AUTO_LOGIN_EMAIL;
 
 export default function LoginPage() {
   const router = useRouter();
   const { isAuthenticated, isLoading, signIn } = useAuth();
   const getOrCreateUser = useMutation(api.users.getOrCreateFromAuth);
   const [autoLoginAttempted, setAutoLoginAttempted] = useState(false);
+  const [credentialsProviderAvailable, setCredentialsProviderAvailable] =
+    useState(false);
+  const autoLoginEmail = getAutoLoginEmail();
+  const effectiveAutoLoginEmail =
+    autoLoginEmail || (credentialsProviderAvailable ? "dev@clawe.local" : null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadProviders = async () => {
+      try {
+        const res = await fetch("/api/auth/providers");
+        if (!res.ok) return;
+        const providers = (await res.json()) as Record<string, unknown>;
+        if (!cancelled) {
+          setCredentialsProviderAvailable(Boolean(providers?.credentials));
+        }
+      } catch {
+        // Ignore provider discovery failures and fall back to visible button.
+      }
+    };
+    loadProviders();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Auto-login when AUTO_LOGIN_EMAIL is set (local dev convenience)
   useEffect(() => {
-    if (!AUTO_LOGIN_EMAIL) return;
+    if (!effectiveAutoLoginEmail) return;
     if (isLoading || isAuthenticated || autoLoginAttempted) return;
     setAutoLoginAttempted(true);
-    signIn(AUTO_LOGIN_EMAIL);
-  }, [isLoading, isAuthenticated, autoLoginAttempted, signIn]);
+    void signIn(effectiveAutoLoginEmail);
+  }, [
+    isLoading,
+    isAuthenticated,
+    autoLoginAttempted,
+    effectiveAutoLoginEmail,
+    signIn,
+  ]);
 
   // After authentication, create/fetch user and redirect
   useEffect(() => {
@@ -79,10 +109,18 @@ export default function LoginPage() {
                   variant="outline"
                   size="lg"
                   className="w-full gap-2"
-                  onClick={() => signIn()}
+                  onClick={() =>
+                    void signIn(effectiveAutoLoginEmail ?? undefined)
+                  }
                 >
-                  <GoogleIcon />
-                  Continue with Google
+                  {effectiveAutoLoginEmail ? (
+                    `Continue as ${effectiveAutoLoginEmail}`
+                  ) : (
+                    <>
+                      <GoogleIcon />
+                      Continue with Google
+                    </>
+                  )}
                 </Button>
               </>
             )}

@@ -75,7 +75,7 @@ describe("GET /api/chat/history", () => {
     expect(data.error).toBe("limit must be between 1 and 1000");
   });
 
-  it("returns 500 on gateway error", async () => {
+  it("returns empty history on gateway error", async () => {
     mockRequest.mockRejectedValue(new Error("Request failed"));
 
     const request = new NextRequest(
@@ -83,13 +83,14 @@ describe("GET /api/chat/history", () => {
     );
 
     const response = await GET(request);
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(200);
 
     const data = await response.json();
-    expect(data.error).toBe("Request failed");
+    expect(data.messages).toEqual([]);
+    expect(data.thinkingLevel).toBeNull();
   });
 
-  it("returns 500 when getSharedClient fails", async () => {
+  it("returns empty history when getSharedClient fails", async () => {
     const { getSharedClient } = await import("@clawe/shared/squadhub");
     vi.mocked(getSharedClient).mockRejectedValueOnce(
       new Error("Connection failed"),
@@ -100,9 +101,10 @@ describe("GET /api/chat/history", () => {
     );
 
     const response = await GET(request);
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(200);
 
     const data = await response.json();
-    expect(data.error).toBe("Connection failed");
+    expect(data.messages).toEqual([]);
+    expect(data.thinkingLevel).toBeNull();
   });
 });

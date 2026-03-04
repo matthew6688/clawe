@@ -40,8 +40,13 @@ function writeJson(filePath, data) {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
 }
 
-function createPairedEntry(deviceId, publicKey, meta) {
+function createPairedEntry(deviceId, publicKey, meta, existingEntry) {
   const now = Date.now();
+  const existingOperatorToken = existingEntry?.tokens?.operator?.token;
+  const existingOperatorCreatedAt =
+    existingEntry?.tokens?.operator?.createdAtMs || now;
+  const existingOperatorLastUsedAt =
+    existingEntry?.tokens?.operator?.lastUsedAtMs || now;
   return {
     deviceId,
     publicKey,
@@ -58,18 +63,20 @@ function createPairedEntry(deviceId, publicKey, meta) {
     ],
     tokens: {
       operator: {
-        token: crypto.randomBytes(16).toString("hex"),
+        // Reuse existing token for known devices so browser/webchat sessions
+        // don't get trapped in "device token mismatch" loops after restart.
+        token: existingOperatorToken || crypto.randomBytes(16).toString("hex"),
         role: "operator",
         scopes: meta.scopes || [
           "operator.admin",
           "operator.approvals",
           "operator.pairing",
         ],
-        createdAtMs: now,
-        lastUsedAtMs: now,
+        createdAtMs: existingOperatorCreatedAt,
+        lastUsedAtMs: existingOperatorLastUsedAt,
       },
     },
-    createdAtMs: meta.ts || now,
+    createdAtMs: existingEntry?.createdAtMs || meta.ts || now,
     approvedAtMs: now,
   };
 }
@@ -102,10 +109,15 @@ function pairFromIdentity() {
     return;
   }
 
-  paired[identity.deviceId] = createPairedEntry(identity.deviceId, publicKey, {
-    clientId: "gateway-client",
-    clientMode: "backend",
-  });
+  paired[identity.deviceId] = createPairedEntry(
+    identity.deviceId,
+    publicKey,
+    {
+      clientId: "gateway-client",
+      clientMode: "backend",
+    },
+    paired[identity.deviceId],
+  );
 
   writeJson(pairedFile, paired);
   console.log(
@@ -136,6 +148,7 @@ function approvePending() {
       entry.deviceId,
       entry.publicKey,
       entry,
+      paired[entry.deviceId],
     );
 
     delete pending[requestId];

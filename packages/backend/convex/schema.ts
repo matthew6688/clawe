@@ -46,6 +46,7 @@ export default defineSchema({
     efsAccessPointId: v.optional(v.string()),
     anthropicApiKey: v.optional(v.string()),
     openaiApiKey: v.optional(v.string()),
+    kimiApiKey: v.optional(v.string()),
     settings: v.optional(
       v.object({
         timezone: v.optional(v.string()),

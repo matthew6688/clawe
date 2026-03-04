@@ -36,7 +36,18 @@ const getPublicKey = async () => {
 const ISSUER = process.env.NEXTAUTH_URL ?? "http://localhost:3000";
 const AUDIENCE = "convex";
 
-const providers: Provider[] = [Google];
+const providers: Provider[] = [];
+
+const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim();
+const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
+if (googleClientId && googleClientSecret) {
+  providers.push(
+    Google({
+      clientId: googleClientId,
+      clientSecret: googleClientSecret,
+    }),
+  );
+}
 
 if (process.env.AUTO_LOGIN_EMAIL) {
   providers.push(

@@ -1,8 +1,10 @@
-export const RuntimeConfig = () => {
-  const config = {
-    convexUrl:
-      process.env.NEXT_PUBLIC_CONVEX_URL || process.env.CONVEX_URL || "",
-  };
+import { headers } from "next/headers";
+import { getPublicRuntimeConfig } from "@/lib/runtime-config";
+
+export const RuntimeConfig = async () => {
+  // Make config injection request-time, not build-time static HTML.
+  await headers();
+  const config = getPublicRuntimeConfig();
 
   return (
     <script

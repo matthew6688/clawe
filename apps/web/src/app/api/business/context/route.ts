@@ -1,14 +1,19 @@
 import { NextResponse } from "next/server";
 import { ConvexHttpClient } from "convex/browser";
 import { api } from "@clawe/backend";
+import {
+  getServerEnvValue,
+  getServerRuntimeConfig,
+} from "@/lib/runtime-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function getEnvConfig() {
+  const { convexUrl } = getServerRuntimeConfig();
   return {
-    convexUrl: process.env.NEXT_PUBLIC_CONVEX_URL,
-    squadhubToken: process.env.SQUADHUB_TOKEN,
+    convexUrl,
+    squadhubToken: getServerEnvValue("SQUADHUB_TOKEN"),
   };
 }
 

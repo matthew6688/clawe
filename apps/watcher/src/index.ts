@@ -36,6 +36,31 @@ type TenantInfo = {
 };
 
 /**
+ * In Docker, tenant records may still contain localhost from earlier setup.
+ * Normalize to an internal URL so watcher can always reach squadhub.
+ */
+function normalizeSquadhubUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.toLowerCase();
+    if (host === "localhost" || host === "127.0.0.1" || host === "::1") {
+      return (
+        process.env.SQUADHUB_INTERNAL_URL ||
+        process.env.SQUADHUB_URL ||
+        "http://squadhub:18789"
+      );
+    }
+    return url;
+  } catch {
+    return (
+      process.env.SQUADHUB_INTERNAL_URL ||
+      process.env.SQUADHUB_URL ||
+      "http://squadhub:18789"
+    );
+  }
+}
+
+/**
  * Get the list of active tenants to service.
  *
  * Queries Convex `tenants.listActive` for all active tenants
@@ -49,7 +74,7 @@ async function getActiveTenants(): Promise<TenantInfo[]> {
     (t: { id: string; squadhubUrl: string; squadhubToken: string }) => ({
       id: t.id,
       connection: {
-        squadhubUrl: t.squadhubUrl,
+        squadhubUrl: normalizeSquadhubUrl(t.squadhubUrl),
         squadhubToken: t.squadhubToken,
       },
     }),
@@ -57,6 +82,7 @@ async function getActiveTenants(): Promise<TenantInfo[]> {
 }
 
 const ROUTINE_CHECK_INTERVAL_MS = 10_000; // Check routines every 10 seconds
+const PRESENCE_REFRESH_INTERVAL_MS = 5 * 60 * 1000; // Keep agents online every 5 min
 
 /**
  * Sleep helper
@@ -128,6 +154,50 @@ async function checkRoutines(): Promise<void> {
 }
 
 /**
+ * Refresh agent presence in Convex for one tenant.
+ *
+ * This heartbeat path is independent from model execution, so agents remain
+ * online even when provider quotas are temporarily exhausted.
+ */
+async function refreshPresenceForTenant(machineToken: string): Promise<void> {
+  const agents = await convex.query(api.agents.list, { machineToken });
+
+  for (const agent of agents) {
+    if (!agent.sessionKey) continue;
+
+    try {
+      await convex.mutation(api.agents.heartbeat, {
+        machineToken,
+        sessionKey: agent.sessionKey,
+      });
+    } catch (err) {
+      logger.warn(
+        { sessionKey: agent.sessionKey, err },
+        "Failed to refresh agent presence",
+      );
+    }
+  }
+}
+
+/**
+ * Refresh agent presence for all active tenants.
+ */
+async function refreshAgentPresence(): Promise<void> {
+  const tenants = await getActiveTenants();
+
+  for (const tenant of tenants) {
+    try {
+      await refreshPresenceForTenant(tenant.connection.squadhubToken);
+    } catch (err) {
+      logger.error(
+        { tenantId: tenant.id, err },
+        "Error refreshing agent presence",
+      );
+    }
+  }
+}
+
+/**
  * Format a notification for delivery to an agent
  */
 function formatNotification(notification: {
@@ -174,40 +244,94 @@ async function deliverToAgent(
       return;
     }
 
+    type NotificationId = (typeof notifications)[number]["_id"];
+    const markDelivered = async (
+      notificationIds: NotificationId[],
+      reason: string,
+    ): Promise<void> => {
+      if (notificationIds.length === 0) return;
+      try {
+        await convex.mutation(api.notifications.markDelivered, {
+          machineToken,
+          notificationIds,
+        });
+      } catch (err) {
+        logger.error(
+          { sessionKey, notificationIds, reason, err },
+          "Failed to mark notifications delivered",
+        );
+      }
+    };
+
+    const now = Date.now();
+    const staleNotifications = notifications.filter(
+      (notification) =>
+        now - notification.createdAt > config.notificationStaleAfterMs,
+    );
+
+    if (staleNotifications.length > 0) {
+      await markDelivered(
+        staleNotifications.map((notification) => notification._id),
+        "stale",
+      );
+      logger.info(
+        {
+          sessionKey,
+          count: staleNotifications.length,
+          staleAfterMs: config.notificationStaleAfterMs,
+        },
+        "Skipped stale notifications",
+      );
+    }
+
+    const staleIds = new Set(
+      staleNotifications.map((notification) => notification._id),
+    );
+    const freshNotifications = notifications
+      .filter((notification) => !staleIds.has(notification._id))
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, config.notificationMaxPerAgentPerLoop);
+
+    if (freshNotifications.length === 0) {
+      return;
+    }
+
     logger.info(
-      { sessionKey, count: notifications.length },
+      { sessionKey, count: freshNotifications.length },
       "Pending notifications",
     );
 
-    for (const notification of notifications) {
+    for (const notification of freshNotifications) {
       try {
         // Format the notification message
         const message = formatNotification(notification);
 
         // Try to deliver to agent session via tenant's squadhub
-        const result = await sessionsSend(connection, sessionKey, message, 10);
+        const result = await sessionsSend(
+          connection,
+          sessionKey,
+          message,
+          config.notificationSendTimeoutSeconds,
+        );
 
         if (result.ok) {
-          // Mark as delivered in Convex
-          await convex.mutation(api.notifications.markDelivered, {
-            machineToken,
-            notificationIds: [notification._id],
-          });
+          await markDelivered([notification._id], "ok");
 
           logger.info(
             { sessionKey, preview: notification.content.slice(0, 50) },
             "Delivered notification",
           );
         } else {
-          // Agent might be asleep or session unavailable
+          // Best effort: avoid retry storms on repeated unavailable/timeout failures.
+          await markDelivered([notification._id], "failed");
           logger.warn(
             { sessionKey, error: result.error?.message ?? "unknown error" },
-            "Agent unavailable",
+            "Agent unavailable; notification dropped",
           );
         }
       } catch (err) {
-        // Network error or agent asleep
-        logger.warn({ sessionKey, err }, "Agent delivery error");
+        await markDelivered([notification._id], "error");
+        logger.warn({ sessionKey, err }, "Agent delivery error; notification dropped");
       }
     }
   } catch (err) {
@@ -253,6 +377,23 @@ function startRoutineCheckLoop(): void {
 }
 
 /**
+ * Start the agent presence refresh loop.
+ */
+function startPresenceLoop(): void {
+  const runRefresh = async () => {
+    try {
+      await refreshAgentPresence();
+    } catch (err) {
+      logger.error({ err }, "Presence refresh error");
+    }
+  };
+
+  // Run immediately, then every interval.
+  void runRefresh();
+  setInterval(() => void runRefresh(), PRESENCE_REFRESH_INTERVAL_MS);
+}
+
+/**
  * Start the notification delivery loop
  */
 async function startDeliveryLoop(): Promise<void> {
@@ -277,6 +418,10 @@ async function main(): Promise<void> {
     {
       pollIntervalMs: POLL_INTERVAL_MS,
       routineCheckIntervalMs: ROUTINE_CHECK_INTERVAL_MS,
+      presenceRefreshIntervalMs: PRESENCE_REFRESH_INTERVAL_MS,
+      notificationSendTimeoutSeconds: config.notificationSendTimeoutSeconds,
+      notificationStaleAfterMs: config.notificationStaleAfterMs,
+      notificationMaxPerAgentPerLoop: config.notificationMaxPerAgentPerLoop,
     },
     "Intervals configured",
   );
@@ -284,6 +429,8 @@ async function main(): Promise<void> {
 
   // Start routine check loop (every 10 seconds)
   startRoutineCheckLoop();
+  // Start presence keepalive loop (every 5 minutes)
+  startPresenceLoop();
 
   // Start notification delivery loop (uses POLL_INTERVAL_MS)
   await startDeliveryLoop();
