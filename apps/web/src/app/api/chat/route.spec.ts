@@ -680,12 +680,21 @@ describe("POST /api/chat", () => {
     await expect(response.text()).resolves.toBe("Acknowledged.");
     expect(response.headers.get("X-Clawe-Auto-Collab")).toBeNull();
     expect(response.headers.get("X-Clawe-Session-Key")).toBe("agent:main:main");
+    expect(response.headers.get("X-Clawe-Clarification-Only")).toBe("true");
     expect(mutationMock).not.toHaveBeenCalled();
     expect(sessionsSendMock).toHaveBeenCalledTimes(1);
     expect(sessionsSendMock).toHaveBeenCalledWith(
       expect.any(Object),
       "agent:main:main",
-      "prepare next week launch plan",
+      expect.stringContaining(
+        "SYSTEM POLICY: clarification-only mode is active for this turn.",
+      ),
+      expect.any(Number),
+    );
+    expect(sessionsSendMock).toHaveBeenCalledWith(
+      expect.any(Object),
+      "agent:main:main",
+      expect.stringContaining("User message: prepare next week launch plan"),
       expect.any(Number),
     );
     expect(fetchMock).not.toHaveBeenCalled();

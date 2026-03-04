@@ -91,7 +91,7 @@ const COLLAB_TARGET_DISPATCH_TIMEOUT_SECONDS = parseTimeoutSeconds(
 );
 const DEFAULT_SESSION_SEND_TIMEOUT_SECONDS = parseTimeoutSeconds(
   getServerEnvValue("CLAWE_SESSION_SEND_TIMEOUT_SECONDS"),
-  45,
+  120,
 );
 const LEAD_SYNTHESIS_TIMEOUT_SECONDS = parseTimeoutSeconds(
   getServerEnvValue("CLAWE_LEAD_SYNTHESIS_TIMEOUT_SECONDS"),
@@ -340,6 +340,16 @@ function isDelegationConfirmation(text: string): boolean {
       trimmed,
     ) || /开始分工|开始执行|现在分配|可以分配|去执行|不用再问|没有更多(?:信息|内容|补充)?|没其他(?:了|补充)?|就这些|以上/.test(trimmed)
   );
+}
+
+function buildClarificationOnlyPrompt(userMessage: string): string {
+  return [
+    "SYSTEM POLICY: clarification-only mode is active for this turn.",
+    "Do NOT create tasks, do NOT assign/delegate work, and do NOT send notifications to other agents.",
+    "First ask clarifying questions and summarize understanding.",
+    "Only ask for explicit user confirmation to start delegation.",
+    `User message: ${userMessage}`,
+  ].join("\n\n");
 }
 
 function resolveMentionTargets(
@@ -1154,16 +1164,26 @@ export async function POST(request: NextRequest) {
       stripMentions(lastUserContent) ||
       lastUserContent;
     if (defaultMessage) {
+      const clarificationOnlyMode =
+        sessionKey === MAIN_SESSION_KEY &&
+        routingMentions.length === 0 &&
+        REQUIRE_DELEGATION_CONFIRMATION &&
+        !delegationConfirmed;
+      const defaultDispatchMessage = clarificationOnlyMode
+        ? buildClarificationOnlyPrompt(defaultMessage)
+        : defaultMessage;
+
       debugChat("default_session_dispatch_started", {
         sourceSessionKey: sessionKey,
         messageLength: defaultMessage.length,
+        clarificationOnlyMode,
       });
 
       try {
         const sessionDispatch = await sessionsSend(
           getConnection(auth.tenant),
           sessionKey,
-          defaultMessage,
+          defaultDispatchMessage,
           DEFAULT_SESSION_SEND_TIMEOUT_SECONDS,
         );
 
@@ -1186,6 +1206,9 @@ export async function POST(request: NextRequest) {
               "Content-Type": "text/plain; charset=utf-8",
               "X-Clawe-Session-Routed": "true",
               "X-Clawe-Session-Key": sessionKey,
+              "X-Clawe-Clarification-Only": clarificationOnlyMode
+                ? "true"
+                : "false",
             },
           });
         }
