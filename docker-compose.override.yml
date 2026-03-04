@@ -24,6 +24,8 @@ services:
   clawe:
     profiles:
       - production
+    volumes:
+      - ./.squadhub:/squadhub-host
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:

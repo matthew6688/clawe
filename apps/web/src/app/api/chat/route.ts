@@ -1,5 +1,7 @@
 import type { NextRequest } from "next/server";
+import type { ConvexHttpClient } from "convex/browser";
 import { api } from "@clawe/backend";
+import type { Id } from "@clawe/backend/dataModel";
 import { sessionsSend } from "@clawe/shared/squadhub";
 import { getAuthenticatedTenant } from "@/lib/api/tenant-auth";
 import { getConnection } from "@/lib/squadhub/connection";
@@ -36,6 +38,8 @@ type AgentSummary = {
 type MentionTarget = AgentSummary & {
   token: string;
 };
+type ConvexMutationFn = ConvexHttpClient["mutation"];
+type NotificationId = Id<"notifications">;
 type SpecialistReply = {
   name: string;
   response: string;
@@ -123,6 +127,11 @@ function toJsonResponse(status: number, error: string) {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function coerceNotificationIds(value: unknown): NotificationId[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((id): id is NotificationId => typeof id === "string");
 }
 
 function normalizeMessages(messages: unknown[]): ChatMessage[] {
@@ -632,14 +641,12 @@ async function notifyTargets({
   dispatchMessage,
   targets,
 }: {
-  convex: {
-    mutation: (...args: any[]) => Promise<unknown>;
-  };
+  convex: { mutation: ConvexMutationFn };
   sourceSessionKey: string;
   sourceName: string;
   dispatchMessage: string;
   targets: MentionTarget[];
-}): Promise<unknown[]> {
+}): Promise<NotificationId[]> {
   if (targets.length === 0) return [];
 
   const content = `${sourceName}: ${dispatchMessage || "(no text provided)"}`;
@@ -652,7 +659,7 @@ async function notifyTargets({
       type: "message_received",
       content,
     });
-    return id ? [id] : [];
+    return typeof id === "string" ? [id as NotificationId] : [];
   }
 
   const ids = await convex.mutation(api.notifications.sendToMany, {
@@ -661,15 +668,15 @@ async function notifyTargets({
     type: "message_received",
     content,
   });
-  return Array.isArray(ids) ? ids : [];
+  return coerceNotificationIds(ids);
 }
 
 async function markNotificationsDelivered({
   convex,
   notificationIds,
 }: {
-  convex: { mutation: (...args: any[]) => Promise<unknown> };
-  notificationIds: unknown[];
+  convex: { mutation: ConvexMutationFn };
+  notificationIds: NotificationId[];
 }) {
   if (notificationIds.length === 0) return;
   await convex.mutation(api.notifications.markDelivered, {
