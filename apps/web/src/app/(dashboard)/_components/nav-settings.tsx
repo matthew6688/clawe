@@ -10,6 +10,7 @@ import {
   KeyRound,
   Bot,
   Plug,
+  Logs,
 } from "lucide-react";
 import {
   SidebarGroup,
@@ -36,6 +37,11 @@ const settingsItems = [
     title: "API Keys",
     url: "/settings/api-keys",
     icon: KeyRound,
+  },
+  {
+    title: "Logs",
+    url: "/settings/logs",
+    icon: Logs,
   },
   {
     title: "Business",
