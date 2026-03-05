@@ -62,6 +62,12 @@ async function verifyCognitoToken(
 
 let nextAuthVerify: typeof import("jose").jwtVerify;
 let nextAuthKeySet: ReturnType<typeof import("jose").createLocalJWKSet>;
+const NEXTAUTH_ALLOWED_ISSUERS = [
+  process.env.NEXTAUTH_ISSUER_URL,
+  process.env.NEXTAUTH_URL,
+  "http://localhost:3000",
+  "http://localhost:3001",
+].filter((value, index, all): value is string => Boolean(value) && all.indexOf(value) === index);
 
 async function verifyNextAuthToken(
   token: string,
@@ -75,7 +81,7 @@ async function verifyNextAuthToken(
     }
 
     const { payload } = await nextAuthVerify(token, nextAuthKeySet, {
-      issuer: process.env.NEXTAUTH_URL ?? "http://localhost:3000",
+      issuer: NEXTAUTH_ALLOWED_ISSUERS,
       audience: "convex",
     });
 

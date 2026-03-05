@@ -294,10 +294,14 @@ export async function GET(request: NextRequest) {
   const resolved = await resolveSquadhubRoot();
   if (!resolved) {
     return reqLog.json(
-      500,
+      200,
       {
-        ok: false,
-        error: "Unable to locate squadhub state root",
+        ok: true,
+        rootPath: null,
+        configPath: null,
+        config: null,
+        agents: [],
+        unavailable: "squadhub_state_root_missing",
       },
       "openclaw.root_missing",
     );

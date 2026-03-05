@@ -72,28 +72,25 @@ const NextAuthProvider = ({ children }: { children: ReactNode }) => {
 
   const signIn = useCallback(async (email?: string) => {
     const { signIn: nextAuthSignIn } = await import("next-auth/react");
-    if (email) {
-      // Credentials auto-login (for local dev with AUTO_LOGIN_EMAIL)
-      const result = await nextAuthSignIn("credentials", {
-        redirect: false,
-        email,
-      });
-      if (result?.ok) {
-        const res = await fetch("/api/auth/session");
-        if (res.ok) {
-          const session = await res.json();
-          if (session?.user?.email) {
-            setUser({
-              email: session.user.email,
-              name: session.user.name ?? undefined,
-            });
-            setIsAuthenticated(true);
-          }
+    const submittedEmail = (email ?? "").trim().toLowerCase();
+    if (!submittedEmail) return;
+
+    const result = await nextAuthSignIn("credentials", {
+      redirect: false,
+      email: submittedEmail,
+    });
+    if (result?.ok) {
+      const res = await fetch("/api/auth/session");
+      if (res.ok) {
+        const session = await res.json();
+        if (session?.user?.email) {
+          setUser({
+            email: session.user.email,
+            name: session.user.name ?? undefined,
+          });
+          setIsAuthenticated(true);
         }
       }
-    } else {
-      // Google OAuth (redirect-based flow)
-      await nextAuthSignIn("google");
     }
   }, []);
 
@@ -176,7 +173,7 @@ const CognitoProvider = ({ children }: { children: ReactNode }) => {
   }, [checkAuthState]);
 
   const signIn = useCallback(async () => {
-    await signInWithRedirect({ provider: "Google" });
+    await signInWithRedirect();
   }, []);
 
   const signOut = useCallback(async () => {

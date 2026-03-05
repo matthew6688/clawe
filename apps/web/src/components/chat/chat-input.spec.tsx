@@ -10,6 +10,23 @@ describe("ChatInput", () => {
     onSend: vi.fn(),
   };
 
+  const mentionAgents = [
+    {
+      id: "agent_inky",
+      name: "Inky",
+      sessionKey: "agent:inky:main",
+      emoji: "✍️",
+      status: "online" as const,
+    },
+    {
+      id: "agent_scout",
+      name: "Scout",
+      sessionKey: "agent:scout:main",
+      emoji: "🔎",
+      status: "online" as const,
+    },
+  ];
+
   it("renders textarea with placeholder", () => {
     render(<ChatInput {...defaultProps} />);
     expect(
@@ -98,5 +115,86 @@ describe("ChatInput", () => {
     // First button should be attach
     const buttons = screen.getAllByRole("button");
     expect(buttons.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("shows mention suggestions when typing @", () => {
+    const onChange = vi.fn();
+    render(
+      <ChatInput
+        {...defaultProps}
+        onChange={onChange}
+        mentionAgents={mentionAgents}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText("Send a message..."), {
+      target: { value: "@" },
+    });
+
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    expect(screen.getByText("All Agents")).toBeInTheDocument();
+    expect(screen.getByText("Inky")).toBeInTheDocument();
+    expect(screen.getByText("Scout")).toBeInTheDocument();
+  });
+
+  it("inserts selected mention handle into input", () => {
+    const onChange = vi.fn();
+    render(
+      <ChatInput
+        {...defaultProps}
+        value="@"
+        onChange={onChange}
+        mentionAgents={mentionAgents}
+      />,
+    );
+
+    const input = screen.getByPlaceholderText(
+      "Send a message...",
+    ) as HTMLTextAreaElement;
+    input.setSelectionRange(1, 1);
+    fireEvent.select(input);
+
+    const inkyOption = screen.getByRole("option", { name: /Inky/i });
+    fireEvent.mouseDown(inkyOption);
+
+    expect(onChange).toHaveBeenCalledWith("@inky ");
+  });
+
+  it("inserts @agent broadcast mention from suggestions", () => {
+    const onChange = vi.fn();
+    render(
+      <ChatInput
+        {...defaultProps}
+        value="@"
+        onChange={onChange}
+        mentionAgents={mentionAgents}
+      />,
+    );
+
+    const input = screen.getByPlaceholderText(
+      "Send a message...",
+    ) as HTMLTextAreaElement;
+    input.setSelectionRange(1, 1);
+    fireEvent.select(input);
+
+    const allAgentsOption = screen.getByRole("option", { name: /All Agents/i });
+    fireEvent.mouseDown(allAgentsOption);
+
+    expect(onChange).toHaveBeenCalledWith("@agent ");
+  });
+
+  it("inserts @agent from quick action button", () => {
+    const onChange = vi.fn();
+    render(
+      <ChatInput
+        {...defaultProps}
+        value="Please help"
+        onChange={onChange}
+        mentionAgents={mentionAgents}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "@agent" }));
+    expect(onChange).toHaveBeenCalledWith("Please help @agent ");
   });
 });

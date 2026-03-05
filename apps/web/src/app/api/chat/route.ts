@@ -17,7 +17,14 @@ const DEFAULT_KIMI_MODEL = "k2p5";
 const DEMO_FALLBACK_ENABLED =
   (getServerEnvValue("CLAWE_EDITION") ?? "oss") !== "cloud";
 const MAIN_SESSION_KEY = "agent:main:main";
-const BROADCAST_MENTION_TOKENS = new Set(["all", "team", "squad", "everyone"]);
+const BROADCAST_MENTION_TOKENS = new Set([
+  "all",
+  "team",
+  "squad",
+  "everyone",
+  "agent",
+  "agents",
+]);
 const LIGHTWEIGHT_MESSAGES = new Set([
   "hi",
   "hey",
@@ -97,6 +104,16 @@ const COLLAB_TARGET_DISPATCH_TIMEOUT_SECONDS = parseTimeoutSeconds(
 const DEFAULT_SESSION_SEND_TIMEOUT_SECONDS = parseTimeoutSeconds(
   getServerEnvValue("CLAWE_SESSION_SEND_TIMEOUT_SECONDS"),
   120,
+);
+const MAIN_SESSION_SEND_ATTEMPTS = Math.max(
+  1,
+  Math.min(
+    Number.parseInt(
+      getServerEnvValue("CLAWE_MAIN_SESSION_SEND_ATTEMPTS") ?? "2",
+      10,
+    ) || 2,
+    3,
+  ),
 );
 const LEAD_SYNTHESIS_TIMEOUT_SECONDS = parseTimeoutSeconds(
   getServerEnvValue("CLAWE_LEAD_SYNTHESIS_TIMEOUT_SECONDS"),
@@ -1049,7 +1066,9 @@ export async function POST(request: NextRequest) {
         });
 
         const isCollaborativeRoute = collaborationIntent || targets.length > 1;
-        if (MENTION_DISPATCH_MODE === "async") {
+        const useAsyncDispatch =
+          MENTION_DISPATCH_MODE === "async" && isCollaborativeRoute;
+        if (useAsyncDispatch) {
           logChatDebug("mention_dispatch_completed", {
             sourceSessionKey: sessionKey,
             sourceName,
@@ -1278,67 +1297,112 @@ export async function POST(request: NextRequest) {
         messageLength: defaultMessage.length,
         clarificationOnlyMode,
       });
+      let dispatchFailureReason: string | null = null;
 
       try {
+        const attemptCount =
+          sessionKey === MAIN_SESSION_KEY ? MAIN_SESSION_SEND_ATTEMPTS : 1;
+        for (let attempt = 1; attempt <= attemptCount; attempt++) {
         reqLog.log.info(
           {
             sessionKey,
             timeoutSeconds: DEFAULT_SESSION_SEND_TIMEOUT_SECONDS,
             clarificationOnlyMode,
+            attempt,
+            attemptCount,
           },
           "chat.session_dispatch_attempt",
         );
 
-        const sessionDispatch = await sessionsSend(
-          getConnection(auth.tenant),
-          sessionKey,
-          defaultDispatchMessage,
-          DEFAULT_SESSION_SEND_TIMEOUT_SECONDS,
-        );
-
-        if (!sessionDispatch.ok) {
-          logChatDebug("default_session_dispatch_error", {
-            sourceSessionKey: sessionKey,
-            error: sessionDispatch.error?.message ?? "unknown",
-          });
-        }
-
-        const sessionReply = extractSessionsSendReply(sessionDispatch);
-        if (sessionReply) {
-          logChatDebug("default_session_dispatch_completed", {
-            sourceSessionKey: sessionKey,
-            replyLength: sessionReply.length,
-          });
-          return respond(
-            new Response(sessionReply, {
-              status: 200,
-              headers: {
-                "Content-Type": "text/plain; charset=utf-8",
-                "X-Clawe-Session-Routed": "true",
-                "X-Clawe-Session-Key": sessionKey,
-                "X-Clawe-Clarification-Only": clarificationOnlyMode
-                  ? "true"
-                  : "false",
-              },
-            }),
-            "chat.session_dispatch_success",
-            {
-              sessionKey,
-              clarificationOnlyMode,
-            },
+          const sessionDispatch = await sessionsSend(
+            getConnection(auth.tenant),
+            sessionKey,
+            defaultDispatchMessage,
+            DEFAULT_SESSION_SEND_TIMEOUT_SECONDS,
           );
+
+          if (!sessionDispatch.ok) {
+            dispatchFailureReason =
+              sessionDispatch.error?.message ?? "dispatch_error";
+            logChatDebug("default_session_dispatch_error", {
+              sourceSessionKey: sessionKey,
+              error: dispatchFailureReason,
+              attempt,
+              attemptCount,
+            });
+            continue;
+          }
+
+          const sessionReply = extractSessionsSendReply(sessionDispatch);
+          if (sessionReply) {
+            logChatDebug("default_session_dispatch_completed", {
+              sessionKey,
+              replyLength: sessionReply.length,
+              attempt,
+              attemptCount,
+            });
+            return respond(
+              new Response(sessionReply, {
+                status: 200,
+                headers: {
+                  "Content-Type": "text/plain; charset=utf-8",
+                  "X-Clawe-Session-Routed": "true",
+                  "X-Clawe-Session-Key": sessionKey,
+                  "X-Clawe-Clarification-Only": clarificationOnlyMode
+                    ? "true"
+                    : "false",
+                },
+              }),
+              "chat.session_dispatch_success",
+              {
+                sessionKey,
+                clarificationOnlyMode,
+                attempt,
+                attemptCount,
+              },
+            );
+          }
+
+          dispatchFailureReason = "empty_reply";
         }
       } catch (error) {
+        dispatchFailureReason =
+          error instanceof Error ? error.message : String(error);
         logChatDebug("default_session_dispatch_exception", {
           sourceSessionKey: sessionKey,
-          error: error instanceof Error ? error.message : String(error),
+          error: dispatchFailureReason,
         });
       }
 
       if (isAgentSessionKey(sessionKey)) {
+        if (sessionKey === MAIN_SESSION_KEY) {
+          return respond(
+            new Response(
+              "Clawe took too long to respond. To keep moving, tag a specialist directly (for example @scout, @inky, or @pixel).",
+              {
+                status: 200,
+                headers: {
+                  "Content-Type": "text/plain; charset=utf-8",
+                  "X-Clawe-Session-Routed": "true",
+                  "X-Clawe-Session-Key": sessionKey,
+                  "X-Clawe-Session-Queued": "true",
+                },
+              },
+            ),
+            "chat.session_main_fallback",
+            {
+              sessionKey,
+              dispatchFailureReason,
+            },
+          );
+        }
+
+        const fallbackMessage = dispatchFailureReason
+          ? `No immediate agent reply (${dispatchFailureReason}). Your message was accepted; progress will appear in Activity shortly.`
+          : "No immediate agent reply. Your message was accepted; progress will appear in Activity shortly.";
         return respond(
           new Response(
-            "Agent queue is busy right now. Your message was accepted; progress will appear in Activity shortly.",
+            fallbackMessage,
             {
               status: 200,
               headers: {

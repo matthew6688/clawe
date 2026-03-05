@@ -376,6 +376,78 @@ describe("POST /api/chat", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("routes @agent to all teammates for collaboration", async () => {
+    const queryMock = vi
+      .fn()
+      .mockResolvedValueOnce([
+        { name: "Clawe", sessionKey: "agent:main:main" },
+        { name: "Inky", sessionKey: "agent:inky:main" },
+        { name: "Pixel", sessionKey: "agent:pixel:main" },
+      ])
+      .mockResolvedValueOnce({ name: "Clawe" });
+    const mutationMock = vi.fn().mockResolvedValue(undefined);
+
+    mockTenantAuth.getAuthenticatedTenant.mockResolvedValueOnce({
+      error: null,
+      convex: {
+        query: queryMock,
+        mutation: mutationMock,
+      },
+      tenant: {
+        _id: "test-tenant-id",
+        squadhubUrl: "http://localhost:18790",
+        squadhubToken: "test-token",
+        anthropicApiKey: "sk-ant-test",
+        openaiApiKey: "",
+        kimiApiKey: "",
+        status: "active",
+      },
+    });
+
+    sessionsSendMock
+      .mockResolvedValueOnce({
+        ok: true,
+        result: {
+          content: [{ type: "text", text: "I'll draft copy." }],
+          details: { response: "I'll draft copy." },
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: {
+          content: [{ type: "text", text: "I'll prepare visuals." }],
+          details: { response: "I'll prepare visuals." },
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        result: {
+          content: [{ type: "text", text: "Team plan with owners." }],
+          details: { response: "Team plan with owners." },
+        },
+      });
+
+    const request = new NextRequest("http://localhost/api/chat", {
+      method: "POST",
+      body: JSON.stringify({
+        sessionKey: "agent:main:main",
+        messages: [{ role: "user", content: "@agent prepare launch materials" }],
+      }),
+    });
+
+    const response = await POST(request);
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).toContain("Inky: I'll draft copy.");
+    expect(text).toContain("Pixel: I'll prepare visuals.");
+    expect(text).toContain("Clawe: Team plan with owners.");
+    expect(response.headers.get("X-Clawe-Auto-Collab")).toBe("true");
+    expect(response.headers.get("X-Clawe-Collab-Async")).toBe("false");
+    expect(mutationMock).toHaveBeenCalledTimes(1);
+    expect(sessionsSendMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("routes implicit typo mention to nearest agent name", async () => {
     const queryMock = vi
       .fn()

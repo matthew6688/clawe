@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@clawe/backend";
+import { deriveStatus } from "@clawe/shared/agents";
 import { cn } from "@clawe/ui/lib/utils";
 import { ScrollArea } from "@clawe/ui/components/scroll-area";
 import { Bell, BellOff, Loader2 } from "lucide-react";
@@ -63,6 +64,16 @@ export const LiveFeed = ({ className, limit = 50 }: LiveFeedProps) => {
   const [activeFilter, setActiveFilter] = useState<FeedFilter>("all");
 
   const activities = useQuery(api.activities.feed, { limit });
+  const agents = useQuery(api.agents.list, {});
+  const onlineAgents = useMemo(
+    () =>
+      (agents ?? [])
+        .filter((agent) => deriveStatus(agent) === "online")
+        .sort((a, b) =>
+          a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+        ),
+    [agents],
+  );
   const dedupedActivities = useMemo(() => {
     if (!activities) return [];
 
@@ -130,7 +141,7 @@ export const LiveFeed = ({ className, limit = 50 }: LiveFeedProps) => {
       all: dedupedActivities.length,
       tasks: 0,
       status: 0,
-      heartbeats: 0,
+      heartbeats: onlineAgents.length,
     };
 
     for (const activity of dedupedActivities) {
@@ -142,7 +153,7 @@ export const LiveFeed = ({ className, limit = 50 }: LiveFeedProps) => {
     }
 
     return counts;
-  }, [activities, dedupedActivities]);
+  }, [activities, dedupedActivities, onlineAgents.length]);
 
   return (
     <div
@@ -193,6 +204,32 @@ export const LiveFeed = ({ className, limit = 50 }: LiveFeedProps) => {
                 Loading activity...
               </span>
             </div>
+          ) : activeFilter === "heartbeats" ? (
+            onlineAgents.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12">
+                <BellOff className="text-muted-foreground/50 h-8 w-8" />
+                <span className="text-muted-foreground mt-2 text-sm">
+                  No agents currently online
+                </span>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2 pb-4">
+                {onlineAgents.map((agent) => (
+                  <div
+                    key={agent._id}
+                    className="bg-muted/40 flex items-center gap-2 rounded-md px-3 py-2 text-sm"
+                  >
+                    <span className="text-base leading-none">
+                      {agent.emoji || "🤖"}
+                    </span>
+                    <span className="font-medium">{agent.name}</span>
+                    <span className="ml-auto text-xs text-emerald-600">
+                      online
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )
           ) : filteredActivities.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12">
               <BellOff className="text-muted-foreground/50 h-8 w-8" />

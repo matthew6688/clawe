@@ -3,6 +3,26 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { Chat } from "./chat";
 
+vi.mock("convex/react", () => ({
+  useQuery: vi.fn(() => []),
+}));
+
+vi.mock("@clawe/backend", () => ({
+  api: {
+    agents: {
+      list: {},
+    },
+  },
+}));
+
+vi.mock("@/hooks/use-api-client", () => ({
+  useApiClient: () => ({
+    get: vi.fn().mockResolvedValue({
+      data: { ok: true, agents: [] },
+    }),
+  }),
+}));
+
 // Mock the hooks
 vi.mock("@/hooks/use-chat", () => ({
   useChat: () => ({
